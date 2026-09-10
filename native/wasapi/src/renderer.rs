@@ -368,6 +368,15 @@ fn playback_thread(shared: Arc<Shared>, cmd_rx: Receiver<Command>) {
                     unsafe { let _ = c.Stop(); }
                 }
                 *shared.stats.state.lock().unwrap() = RendererState::Closed;
+                // Release the COM interfaces and the event BEFORE acknowledging: otherwise a caller
+                // that reopens the endpoint immediately after close() can race the release and get
+                // AUDCLNT_E_DEVICE_IN_USE.
+                if let Some(evt) = event_handle.take() {
+                    unsafe { let _ = CloseHandle(evt); }
+                }
+                drop(clock.take());
+                drop(render.take());
+                drop(client.take());
                 let _ = resp.send(Ok(()));
                 break 'outer;
             }

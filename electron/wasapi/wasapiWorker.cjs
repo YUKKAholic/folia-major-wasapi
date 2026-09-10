@@ -410,7 +410,7 @@ const startDecode = ({ filePath, sampleRate, channels, startSec, codec, generati
 // endpoint (AUDCLNT_E_DEVICE_IN_USE, 0x8889000a).
 const openRendererWithRetry = async (targetDeviceId, format, openBits) => {
     let lastError = null;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    for (let attempt = 0; attempt < 6; attempt += 1) {
         const candidate = new native.FoliaWasapi();
         try {
             candidate.openExclusive(targetDeviceId || '', {
@@ -428,7 +428,7 @@ const openRendererWithRetry = async (targetDeviceId, format, openBits) => {
                 // Ignore.
             }
             if (!/0x8889000a/i.test(String(error && error.message || ''))) break;
-            await new Promise((resolve) => setTimeout(resolve, 200));
+            await new Promise((resolve) => setTimeout(resolve, 250));
         }
     }
     throw lastError;
@@ -559,8 +559,10 @@ parentPort.on('message', (msg) => {
             playing = false;
             killFfmpeg();
             clearFeedQueue();
-            stopRenderer();
             clearPositionTimer();
+            // Fully close the renderer: stopping alone would keep the exclusive endpoint held, so
+            // Chromium could not resume and the next exclusive open would fail with DEVICE_IN_USE.
+            closeRenderer();
             cleanupTemp();
             post({ type: 'stopped' });
             break;
