@@ -10,6 +10,7 @@ import { createSafeObjectUrl } from '../../../utils/blobGuards';
 import { formatLocalDateTimeStamp } from '../../../utils/downloadFileName';
 import { CustomSelect } from '../../shared/CustomSelect';
 import LocalLibraryWatchSection from './LocalLibraryWatchSection';
+import DownloadLocationRow from './DownloadLocationRow';
 import { SettingsAnchor } from './navigation/SettingsAnchorContext';
 import SettingsSectionHeading from './navigation/SettingsSectionHeading';
 
@@ -493,6 +494,8 @@ const StorageSettingsSection: React.FC<StorageSettingsSectionProps> = ({
                             </div>
                         </div>
                     )}
+
+                    {isElectron && <DownloadLocationRow />}
 
                     {isElectron && (
                         <div className="pt-3 border-t border-white/10 flex items-center justify-between gap-4">

@@ -1270,6 +1270,9 @@ export default {
     "cacheDirectoryCustomHint": "Using a custom cache location.",
     "chooseCacheDirectory": "Choose Folder",
     "resetCacheDirectory": "Use Default Folder",
+    "downloadLocation": "Download Location",
+    "downloadLocationDesc": "Songs you download from a playlist are saved here as normal audio files.",
+    "openDownloadLocation": "Open Folder",
     "cacheDirectoryPendingDesc": "Electron now stores audio cache files in this directory. Lyrics, covers, and other browser-side caches still use the app data directory.",
     "localLibraryWatch": "Local Folder Watch",
     "localLibraryAutoScan": "Auto scan imported folders",
@@ -2833,5 +2836,21 @@ export default {
     "copyPromptDesc": "Copy the prompt and paste it into any AI model to generate your theme.",
     "importJsonTitle": "2. Paste JSON Result",
     "prompt": "I am using the folia-major music player on GitHub and need help with a problem.\n\nFolia Guide: {{guideUrl}}\nFolia repository: {{repoUrl}}\n\nPlease use these references as context, then help me understand and solve the problem I describe next. If any information is missing, ask what I should provide before making uncertain assumptions."
+  },
+  "download": {
+    "downloadSongs": "Download Songs",
+    "selectSongs": "Select songs to download",
+    "songCount": "{{count}} songs",
+    "selectAll": "Select all",
+    "deselectAll": "Deselect all",
+    "selectedCount": "{{count}} selected",
+    "start": "Download",
+    "windowTitle": "Downloads",
+    "progress": "{{done}}/{{total}} done",
+    "activeCount": "{{count}} downloading",
+    "openFolder": "Open folder",
+    "clearFinished": "Clear finished",
+    "hide": "Minimize",
+    "unavailable": "Not available for download"
   }
 } as const;

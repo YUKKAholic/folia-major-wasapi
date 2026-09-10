@@ -537,6 +537,38 @@ declare global {
     host: string | null;
   }
 
+  /** Progress events for a user-facing song download written to the Downloads/Folia folder. */
+  interface ElectronDownloadProgress {
+    id: string;
+    name: string;
+    status: 'downloading' | 'done' | 'error' | 'canceled';
+    received: number;
+    total: number;
+    error?: string;
+    path?: string;
+  }
+
+  interface ElectronDownloadStartRequest {
+    id: string;
+    /** Remote URL to fetch, or omit when copying an existing local file. */
+    url?: string;
+    /** Existing local file to copy into the download folder. */
+    sourcePath?: string;
+    fileName: string;
+    /** Media-cache key to also seed, so the song plays offline and via WASAPI exclusive. */
+    cacheKey?: string;
+    mimeType?: string;
+    limitBytes?: number;
+  }
+
+  interface ElectronDownloadStartResult {
+    ok: boolean;
+    path?: string;
+    name?: string;
+    error?: string;
+    canceled?: boolean;
+  }
+
   /** One process's share of a memory sample. Sizes are whole megabytes; see electron/debug/memoryMonitor.cjs. */
   interface DebugMemoryProcess {
     pid: number;
@@ -709,11 +741,20 @@ declare global {
       onUpdateStatusChanged: (callback: (status: ElectronUpdateStatus) => void) => () => void;
       getAudioCache: (cacheKey: string) => Promise<ElectronAudioCacheEntry>;
       hasAudioCache: (cacheKey: string) => Promise<boolean>;
+      /** Absolute path of the cached audio file, or null. Used to feed WASAPI exclusive a real file. */
+      getAudioCachePath: (cacheKey: string) => Promise<{ path: string } | null>;
       /** `limitBytes` is the cache ceiling to prune down to afterwards; 0 means no ceiling. */
       saveAudioCache: (cacheKey: string, data: ArrayBuffer, mimeType?: string, limitBytes?: number) => Promise<boolean>;
       getAudioCacheUsage: () => Promise<number>;
       getAudioCacheStats: () => Promise<ElectronAudioCacheStats>;
       clearAudioCache: () => Promise<boolean>;
+      download?: {
+        getDirectory: () => Promise<{ path: string }>;
+        openDirectory: () => Promise<{ ok: boolean; directory?: string; error?: string }>;
+        start: (request: ElectronDownloadStartRequest) => Promise<ElectronDownloadStartResult>;
+        cancel: (id: string) => Promise<boolean>;
+        onProgress: (callback: (progress: ElectronDownloadProgress) => void) => () => void;
+      };
       requestTranscodeFallback?: (request: import('./types/playbackRecovery').TranscodeFallbackRequest) => Promise<import('./types/playbackRecovery').TranscodeFallbackResult>;
       cancelTranscodeFallback?: (requestId: string) => Promise<boolean>;
       getCoverCache: (cacheKey: string) => Promise<ElectronAudioCacheEntry>;

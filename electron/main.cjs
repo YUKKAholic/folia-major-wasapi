@@ -2285,6 +2285,40 @@ function getAudioCacheDirectory() {
   return path.join(getConfiguredCacheDirectory(), 'audio');
 }
 
+// Downloads are plain user-facing files (unlike the hashed media cache), so they live in a visible
+// folder under the OS Downloads directory.
+function getDownloadDirectory() {
+  return path.join(app.getPath('downloads'), 'Folia');
+}
+
+const activeDownloads = new Map();
+
+function sendDownloadProgress(payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('download-progress', payload);
+  }
+}
+
+function sanitizeDownloadFileName(name, fallback = 'download') {
+  const cleaned = String(name || '')
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned || fallback;
+}
+
+// Never overwrite an existing file: append " (1)", " (2)", ... before the extension.
+function resolveUniqueDownloadPath(directory, fileName) {
+  const parsed = path.parse(fileName);
+  let candidate = path.join(directory, fileName);
+  let index = 1;
+  while (fs.existsSync(candidate)) {
+    candidate = path.join(directory, `${parsed.name} (${index})${parsed.ext}`);
+    index += 1;
+  }
+  return candidate;
+}
+
 function getCoverCacheDirectory() {
   return path.join(getConfiguredCacheDirectory(), 'cover');
 }
@@ -5930,6 +5964,17 @@ ipcMain.handle('has-audio-cache', async (event, cacheKey) => {
   return hasAudioCacheEntry(cacheKey);
 });
 
+ipcMain.handle('get-audio-cache-path', async (_event, cacheKey) => {
+  if (!cacheKey || typeof cacheKey !== 'string') return null;
+  const { dataPath } = getAudioCachePaths(cacheKey);
+  try {
+    await fsp.access(dataPath);
+    return { path: dataPath };
+  } catch {
+    return null;
+  }
+});
+
 ipcMain.handle('save-audio-cache', async (event, cacheKey, data, mimeType, limitBytes) => {
   await writeAudioCacheEntry(cacheKey, data, mimeType, limitBytes);
   return true;
@@ -5946,6 +5991,118 @@ ipcMain.handle('get-audio-cache-stats', async () => {
 ipcMain.handle('clear-audio-cache', async () => {
   await clearAudioCacheDirectory();
   return true;
+});
+
+ipcMain.handle('download-get-directory', () => {
+  return { path: getDownloadDirectory() };
+});
+
+ipcMain.handle('download-open-directory', async () => {
+  const target = getDownloadDirectory();
+  try {
+    fs.mkdirSync(target, { recursive: true });
+    const error = await shell.openPath(target);
+    if (error) return { ok: false, error };
+    return { ok: true, directory: target };
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err) };
+  }
+});
+
+ipcMain.handle('download-cancel', (_event, id) => {
+  const controller = activeDownloads.get(String(id));
+  if (!controller) return false;
+  controller.abort();
+  return true;
+});
+
+ipcMain.handle('download-start', async (_event, payload) => {
+  const id = String((payload && payload.id) || '');
+  const url = payload && typeof payload.url === 'string' ? payload.url : null;
+  const sourcePath = payload && typeof payload.sourcePath === 'string' ? payload.sourcePath : null;
+  const fileName = sanitizeDownloadFileName(payload && payload.fileName, 'download');
+  const cacheKey = payload && typeof payload.cacheKey === 'string' ? payload.cacheKey : null;
+  const mimeType = payload && typeof payload.mimeType === 'string' ? payload.mimeType : null;
+  const limitBytes = Number(payload && payload.limitBytes) || 0;
+  if (!id || (!url && !sourcePath)) return { ok: false, error: 'invalid download request' };
+
+  const directory = getDownloadDirectory();
+  fs.mkdirSync(directory, { recursive: true });
+  const finalPath = resolveUniqueDownloadPath(directory, fileName);
+  const partPath = `${finalPath}.part`;
+  const controller = new AbortController();
+  activeDownloads.set(id, controller);
+
+  const { Readable, Transform } = require('stream');
+  const { pipeline } = require('stream/promises');
+
+  let received = 0;
+  let total = 0;
+  let lastReport = 0;
+  const report = (status, extra) => {
+    sendDownloadProgress({ id, name: fileName, status, received, total, ...extra });
+  };
+  const counted = new Transform({
+    transform(chunk, _encoding, callback) {
+      received += chunk.length;
+      const now = Date.now();
+      if (now - lastReport >= 200) {
+        lastReport = now;
+        report('downloading');
+      }
+      callback(null, chunk);
+    },
+  });
+
+  try {
+    let source;
+    if (sourcePath) {
+      total = fs.statSync(sourcePath).size;
+      source = fs.createReadStream(sourcePath, { signal: controller.signal }).pipe(counted);
+    } else {
+      const response = await fetch(url, { redirect: 'follow', signal: controller.signal });
+      if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
+      total = Number(response.headers.get('content-length')) || 0;
+      source = Readable.fromWeb(response.body).pipe(counted);
+    }
+    report('downloading');
+    await pipeline(source, fs.createWriteStream(partPath), { signal: controller.signal });
+    if (total > 0 && received !== total) throw new Error('incomplete download');
+    fs.renameSync(partPath, finalPath);
+    // Seed the media cache too, so the song can be played offline AND served to the WASAPI
+    // exclusive engine from a real file (this is what lets a downloaded online track play
+    // bit-perfect from the playlist, not just from the local library).
+    if (cacheKey) {
+      try {
+        const { dataPath, metaPath } = getAudioCachePaths(cacheKey);
+        await ensureAudioCacheDirectory();
+        await fsp.copyFile(finalPath, dataPath);
+        await fsp.writeFile(metaPath, JSON.stringify({
+          cacheKey,
+          mimeType: mimeType || 'audio/mpeg',
+          size: fs.statSync(finalPath).size,
+          updatedAt: Date.now(),
+        }), 'utf-8');
+        await pruneMediaCache(limitBytes);
+      } catch (cacheError) {
+        console.warn('[download] failed to seed media cache', cacheError);
+      }
+    }
+    report('done', { path: finalPath });
+    return { ok: true, path: finalPath, name: fileName };
+  } catch (err) {
+    try {
+      fs.rmSync(partPath, { force: true });
+    } catch {
+      // Best effort.
+    }
+    const canceled = controller.signal.aborted;
+    const message = String((err && err.message) || err);
+    report(canceled ? 'canceled' : 'error', { error: message });
+    return { ok: false, error: message, canceled };
+  } finally {
+    activeDownloads.delete(id);
+  }
 });
 
 ipcMain.handle('transcode-fallback-request', async (_event, request) => {

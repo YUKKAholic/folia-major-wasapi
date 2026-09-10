@@ -1264,6 +1264,9 @@ export default {
     "cacheDirectoryCustomHint": "Menggunakan lokasi cache kustom.",
     "chooseCacheDirectory": "Pilih Folder",
     "resetCacheDirectory": "Gunakan Folder Bawaan",
+    "downloadLocation": "Lokasi Unduhan",
+    "downloadLocationDesc": "Lagu yang diunduh dari daftar putar disimpan di sini sebagai file audio biasa.",
+    "openDownloadLocation": "Buka Folder",
     "cacheDirectoryPendingDesc": "Electron sekarang menyimpan file cache audio di direktori ini. Lirik, sampul, dan cache sisi browser lainnya tetap menggunakan direktori data aplikasi.",
     "localLibraryWatch": "Pantauan Folder Lokal",
     "localLibraryAutoScan": "Pindai otomatis folder yang diimpor",
@@ -2765,5 +2768,21 @@ export default {
     "copyPromptDesc": "Salin prompt dan tempelkan ke model AI apa pun untuk menghasilkan tema Anda.",
     "importJsonTitle": "2. Tempel Hasil JSON",
     "prompt": "Saya menggunakan pemutar musik folia-major di GitHub dan perlu bantuan untuk masalah.\n\nPanduan Folia: {{guideUrl}}\nRepositori Folia: {{repoUrl}}\n\nHarap gunakan referensi ini sebagai konteks, lalu bantu saya memahami dan menyelesaikan masalah yang saya jelaskan berikutnya. Jika ada informasi yang kurang, tanyakan apa yang harus saya berikan sebelum membuat asumsi yang tidak pasti."
+  },
+  "download": {
+    "downloadSongs": "Unduh Lagu",
+    "selectSongs": "Pilih lagu untuk diunduh",
+    "songCount": "{{count}} lagu",
+    "selectAll": "Pilih semua",
+    "deselectAll": "Batal pilih semua",
+    "selectedCount": "{{count}} dipilih",
+    "start": "Unduh",
+    "windowTitle": "Unduhan",
+    "progress": "{{done}}/{{total}} selesai",
+    "activeCount": "{{count}} mengunduh",
+    "openFolder": "Buka folder",
+    "clearFinished": "Hapus selesai",
+    "hide": "Kecilkan",
+    "unavailable": "Tidak tersedia untuk diunduh"
   }
 } as const;

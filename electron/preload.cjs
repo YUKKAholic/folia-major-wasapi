@@ -106,10 +106,22 @@ contextBridge.exposeInMainWorld('electron', {
     },
     getAudioCache: (cacheKey) => ipcRenderer.invoke('get-audio-cache', cacheKey),
     hasAudioCache: (cacheKey) => ipcRenderer.invoke('has-audio-cache', cacheKey),
+    getAudioCachePath: (cacheKey) => ipcRenderer.invoke('get-audio-cache-path', cacheKey),
     saveAudioCache: (cacheKey, data, mimeType, limitBytes) => ipcRenderer.invoke('save-audio-cache', cacheKey, data, mimeType, limitBytes),
     getAudioCacheUsage: () => ipcRenderer.invoke('get-audio-cache-usage'),
     getAudioCacheStats: () => ipcRenderer.invoke('get-audio-cache-stats'),
     clearAudioCache: () => ipcRenderer.invoke('clear-audio-cache'),
+    download: {
+        getDirectory: () => ipcRenderer.invoke('download-get-directory'),
+        openDirectory: () => ipcRenderer.invoke('download-open-directory'),
+        start: (payload) => ipcRenderer.invoke('download-start', payload),
+        cancel: (id) => ipcRenderer.invoke('download-cancel', id),
+        onProgress: (callback) => {
+            const listener = (_event, progress) => callback(progress);
+            ipcRenderer.on('download-progress', listener);
+            return () => ipcRenderer.removeListener('download-progress', listener);
+        },
+    },
     requestTranscodeFallback: (request) => ipcRenderer.invoke('transcode-fallback-request', request),
     cancelTranscodeFallback: (requestId) => ipcRenderer.invoke('transcode-fallback-cancel', requestId),
     getCoverCache: (cacheKey) => ipcRenderer.invoke('get-cover-cache', cacheKey),

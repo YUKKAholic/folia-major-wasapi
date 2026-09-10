@@ -7,6 +7,7 @@ import { selectDisplayPlayerState, usePlaybackStore } from '../stores/usePlaybac
 import { useAudioSettingsStore } from '../stores/useAudioSettingsStore';
 import { setStatusMessage } from '../stores/useStatusMessageStore';
 import { setWasapiMode, type WasapiMode } from '../stores/useWasapiStatusStore';
+import { getSongResourceCacheKey } from '../services/onlineMusic/resourceKeys';
 import i18n from '../i18n/config';
 
 // src/hooks/useWasapiExclusive.ts
@@ -62,11 +63,22 @@ const resolveWasapiSource = async (
     song: SongResult,
     audioSrc: string | null,
 ): Promise<{ source: WasapiSource; key: string; isUrl: boolean } | null> => {
-    // Online / Navidrome always play through Chromium's shared output. Routing them through the
-    // exclusive engine means downloading the whole track first, which competes with the streaming
-    // element and leaves the output silent for the whole transfer - the "online hangs, no sound"
-    // report. Only local files (real paths or renderer blobs) use exclusive mode.
-    if (!isLocalPlaybackSong(song)) return null;
+    // Online / Navidrome tracks use exclusive mode once a downloaded/cached copy exists on disk.
+    // Downloading seeds Folia's media cache, so a track played from an online playlist - not from
+    // the local library - still gets bit-perfect output from that cached file. Without a cached
+    // copy they stay on Chromium's shared output (the download-everything path stalls).
+    if (!isLocalPlaybackSong(song)) {
+        if (!window.electron?.getAudioCachePath) return null;
+        try {
+            const cached = await window.electron.getAudioCachePath(getSongResourceCacheKey('audio', song));
+            if (cached?.path) {
+                return { source: { filePath: cached.path }, key: `file:${cached.path}`, isUrl: false };
+            }
+        } catch {
+            // Unsupported key: fall through to shared output.
+        }
+        return null;
+    }
     const filePath = await resolveLocalFilePath(song);
     if (filePath && isAbsoluteWindowsPath(filePath)) {
         return { source: { filePath }, key: `file:${filePath}`, isUrl: false };

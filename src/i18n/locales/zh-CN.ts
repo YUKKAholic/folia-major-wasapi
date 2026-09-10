@@ -1269,6 +1269,9 @@ export default {
     "cacheDirectoryCustomHint": "当前使用自定义缓存目录。",
     "chooseCacheDirectory": "选择文件夹",
     "resetCacheDirectory": "恢复默认目录",
+    "downloadLocation": "下载位置",
+    "downloadLocationDesc": "从歌单下载的歌曲会以普通音频文件保存到这里。",
+    "openDownloadLocation": "打开文件夹",
     "cacheDirectoryPendingDesc": "桌面版音频缓存现在会存到这里；歌词、封面和其他浏览器侧缓存仍然保存在应用数据目录。",
     "localLibraryWatch": "本地文件夹监视",
     "localLibraryAutoScan": "自动扫描已导入文件夹",
@@ -2832,5 +2835,21 @@ export default {
     "copyPromptDesc": "将提示词复制并粘贴到任意大模型对话中，生成主题 JSON 数据。",
     "importJsonTitle": "2. 粘贴并导入 JSON",
     "prompt": "我正在使用 GitHub 上的 folia-major 音乐播放器，遇到了一个问题，需要你协助排查。\n\nFolia 使用指南：{{guideUrl}}\nFolia 源码仓库：{{repoUrl}}\n\n请把这些资料作为上下文，结合我接下来描述的问题，帮我判断可能原因并给出处理步骤。如果信息不足，请先询问我需要补充什么，不要直接做不确定的假设。"
+  },
+  "download": {
+    "downloadSongs": "下载歌曲",
+    "selectSongs": "选择要下载的歌曲",
+    "songCount": "共 {{count}} 首",
+    "selectAll": "全选",
+    "deselectAll": "取消全选",
+    "selectedCount": "已选 {{count}} 首",
+    "start": "开始下载",
+    "windowTitle": "下载",
+    "progress": "已完成 {{done}}/{{total}}",
+    "activeCount": "{{count}} 个下载中",
+    "openFolder": "打开文件夹",
+    "clearFinished": "清除已完成",
+    "hide": "最小化",
+    "unavailable": "无法下载"
   }
 } as const;

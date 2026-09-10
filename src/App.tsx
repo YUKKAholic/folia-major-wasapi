@@ -13,6 +13,7 @@ import Home from './components/app/Home';
 import PlayerPanel from './components/app/PlayerPanel';
 import ThemeQuickEditorHost from './components/panelTab/ThemeQuickEditor';
 import AppDialogs from './components/app/dialogs/AppDialogs';
+import DownloadProgressWindow from './components/download/DownloadProgressWindow';
 import { useSettingsDialogModel } from './components/app/dialogs/useSettingsDialogModel';
 import AppOverlays from './components/app/overlays/AppOverlays';
 import AutomixModelReminder from './components/modal/AutomixModelReminder';
@@ -2778,6 +2779,7 @@ export default function App() {
             />
 
             <AppDialogs model={appDialogsModel} />
+            <DownloadProgressWindow isDaylight={isDaylight} />
             <UserGuideModal theme={theme} />
             <PlaybackEntryViewPrompt theme={theme} />
             <LatticeFmNotice />
