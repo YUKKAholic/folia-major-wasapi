@@ -8,6 +8,7 @@ import { useAudioSettingsStore } from '../stores/useAudioSettingsStore';
 import { setStatusMessage } from '../stores/useStatusMessageStore';
 import { setWasapiMode, type WasapiMode } from '../stores/useWasapiStatusStore';
 import { getSongResourceCacheKey } from '../services/onlineMusic/resourceKeys';
+import { recoverAudioOutput } from '../services/audioOutputRecovery';
 import i18n from '../i18n/config';
 
 // src/hooks/useWasapiExclusive.ts
@@ -135,13 +136,21 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
 
     /**
      * Chromium only recreates its audio stream after exclusive mode tore it down when the element
-     * is pause+played. Wait until the element has data so an online stream is not aborted mid-buffer.
+     * is pause+played. Wait until the element has data so an online stream is not aborted mid-buffer,
+     * but force it anyway after a short wait so a slow stream is never left permanently silent.
      */
     const rebuildChromiumOutput = () => {
         const element = audioRef.current;
         if (!element) return;
-        if (usePlaybackStore.getState().playerState !== PlayerState.PLAYING) return;
+        const wantsPlay = usePlaybackStore.getState().playerState === PlayerState.PLAYING
+            || !element.paused;
+        if (!wantsPlay) return;
+        let done = false;
         const forceRecreate = () => {
+            if (done) return;
+            done = true;
+            element.removeEventListener('canplay', forceRecreate);
+            window.clearTimeout(timer);
             try {
                 element.pause();
             } catch {
@@ -149,16 +158,12 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
             }
             void element.play().catch(() => {});
         };
+        const timer = window.setTimeout(forceRecreate, 2500);
         if (element.readyState >= 3) {
             forceRecreate();
             return;
         }
-        const onReady = () => {
-            element.removeEventListener('canplay', onReady);
-            forceRecreate();
-        };
-        element.addEventListener('canplay', onReady, { once: true });
-        window.setTimeout(() => element.removeEventListener('canplay', onReady), 10000);
+        element.addEventListener('canplay', forceRecreate, { once: true });
     };
 
     /**
@@ -170,6 +175,9 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
         void window.electron?.wasapi?.setRendererMuted(false);
         if (!rebuild || !exclusiveActiveRef.current) return;
         exclusiveActiveRef.current = false;
+        // Force Chromium's shared output back: exclusive mode invalidated it and the output routine's
+        // "same device" guard would otherwise leave the next song silent.
+        recoverAudioOutput();
         rebuildChromiumOutput();
     };
 

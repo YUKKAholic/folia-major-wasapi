@@ -113,6 +113,8 @@ contextBridge.exposeInMainWorld('electron', {
     clearAudioCache: () => ipcRenderer.invoke('clear-audio-cache'),
     download: {
         getDirectory: () => ipcRenderer.invoke('download-get-directory'),
+        chooseDirectory: () => ipcRenderer.invoke('choose-download-directory'),
+        resetDirectory: () => ipcRenderer.invoke('reset-download-directory'),
         openDirectory: () => ipcRenderer.invoke('download-open-directory'),
         start: (payload) => ipcRenderer.invoke('download-start', payload),
         cancel: (id) => ipcRenderer.invoke('download-cancel', id),

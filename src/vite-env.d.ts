@@ -569,6 +569,15 @@ declare global {
     canceled?: boolean;
   }
 
+  interface ElectronDownloadDirectoryResult {
+    canceled?: boolean;
+    path: string;
+    isDefault: boolean;
+    /** Files moved from the previous folder when the location changed. */
+    moved?: number;
+    failed?: number;
+  }
+
   /** One process's share of a memory sample. Sizes are whole megabytes; see electron/debug/memoryMonitor.cjs. */
   interface DebugMemoryProcess {
     pid: number;
@@ -749,7 +758,9 @@ declare global {
       getAudioCacheStats: () => Promise<ElectronAudioCacheStats>;
       clearAudioCache: () => Promise<boolean>;
       download?: {
-        getDirectory: () => Promise<{ path: string }>;
+        getDirectory: () => Promise<ElectronDownloadDirectoryResult>;
+        chooseDirectory: () => Promise<ElectronDownloadDirectoryResult>;
+        resetDirectory: () => Promise<ElectronDownloadDirectoryResult>;
         openDirectory: () => Promise<{ ok: boolean; directory?: string; error?: string }>;
         start: (request: ElectronDownloadStartRequest) => Promise<ElectronDownloadStartResult>;
         cancel: (id: string) => Promise<boolean>;

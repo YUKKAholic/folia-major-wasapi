@@ -4,6 +4,7 @@ import type { MutableRefObject, RefObject } from 'react';
 import { useAudioSettingsStore } from '../stores/useAudioSettingsStore';
 import { usePlaybackStore } from '../stores/usePlaybackStore';
 import { setStatusMessage as setStatusMsg } from '../stores/useStatusMessageStore';
+import { onRecoverAudioOutput } from '../services/audioOutputRecovery';
 
 // src/hooks/useAudioOutputDevice.ts
 //
@@ -33,6 +34,7 @@ export const useAudioOutputDevice = ({
     const applyAudioOutputDevice = useCallback(async (
         targetDeviceId: string,
         reportError = true,
+        force = false,
     ) => {
         const audioElement = audioRef.current as (HTMLAudioElement & {
             setSinkId?: (sinkId: string) => Promise<void>;
@@ -52,14 +54,25 @@ export const useAudioOutputDevice = ({
         }
 
         const normalizedTargetDeviceId = targetDeviceId || '';
-        if (audioSinkTarget.sinkId === normalizedTargetDeviceId) {
+        if (!force && audioSinkTarget.sinkId === normalizedTargetDeviceId) {
             persistAudioOutputDeviceId(targetDeviceId);
             return true;
         }
 
         let attempt = 0;
         const maxRetryCount = 4;
-        let shouldPauseBeforeSwitch = normalizedTargetDeviceId === 'default' || normalizedTargetDeviceId === 'communications';
+        let shouldPauseBeforeSwitch = force
+            || normalizedTargetDeviceId === 'default'
+            || normalizedTargetDeviceId === 'communications';
+
+        // A forced recovery also has to wake the context: exclusive mode can leave it suspended.
+        if (force && audioContext?.state === 'suspended') {
+            try {
+                await audioContext.resume();
+            } catch {
+                // Ignore; the sink re-target below is the main recovery.
+            }
+        }
 
         while (attempt <= maxRetryCount) {
             const wasPlaying = Boolean(audioElement && !audioElement.paused && !audioElement.ended);
@@ -151,6 +164,13 @@ export const useAudioOutputDevice = ({
             audioElement.removeEventListener('canplay', handleAudioDeviceRetry);
         };
     }, [applyAudioOutputDevice, audioOutputDeviceId, audioSrc]);
+
+    // Returning from WASAPI exclusive mode: Chromium's output stream was invalidated, and the sink
+    // guard above would normally treat "same device" as a no-op, leaving the next song silent.
+    // Force a re-target so the AudioContext re-acquires the endpoint.
+    useEffect(() => onRecoverAudioOutput(() => {
+        void applyAudioOutputDevice(audioOutputDeviceId, false, true);
+    }), [applyAudioOutputDevice, audioOutputDeviceId]);
 
     const handleAudioOutputDeviceChange = useCallback(async (deviceId: string) => (
         await applyAudioOutputDevice(deviceId, true)

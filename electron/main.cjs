@@ -2286,9 +2286,69 @@ function getAudioCacheDirectory() {
 }
 
 // Downloads are plain user-facing files (unlike the hashed media cache), so they live in a visible
-// folder under the OS Downloads directory.
-function getDownloadDirectory() {
+// folder under the OS Downloads directory by default; the listener can point them elsewhere.
+const DOWNLOAD_DIRECTORY_SETTING_KEY = 'DOWNLOAD_DIRECTORY';
+
+function getDefaultDownloadDirectory() {
   return path.join(app.getPath('downloads'), 'Folia');
+}
+
+function getConfiguredDownloadDirectory() {
+  const configured = store.get(DOWNLOAD_DIRECTORY_SETTING_KEY);
+  return typeof configured === 'string' && configured.trim().length > 0
+    ? configured
+    : getDefaultDownloadDirectory();
+}
+
+function getDownloadDirectory() {
+  return getConfiguredDownloadDirectory();
+}
+
+// Moves every file from one download folder to another, renaming on name collisions. Used when the
+// listener changes the download location so already-downloaded songs come along.
+async function migrateDownloadFiles(fromDirectory, toDirectory) {
+  const result = { moved: 0, failed: 0 };
+  if (!fromDirectory || !toDirectory || path.resolve(fromDirectory) === path.resolve(toDirectory)) {
+    return result;
+  }
+  let entries;
+  try {
+    entries = await fsp.readdir(fromDirectory, { withFileTypes: true });
+  } catch {
+    return result;
+  }
+  await fsp.mkdir(toDirectory, { recursive: true });
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const source = path.join(fromDirectory, entry.name);
+    let target = path.join(toDirectory, entry.name);
+    if (fs.existsSync(target)) {
+      const parsed = path.parse(entry.name);
+      let index = 1;
+      while (fs.existsSync(target)) {
+        target = path.join(toDirectory, `${parsed.name} (${index})${parsed.ext}`);
+        index += 1;
+      }
+    }
+    try {
+      await fsp.rename(source, target);
+    } catch (error) {
+      if (error && error.code === 'EXDEV') {
+        try {
+          await fsp.copyFile(source, target);
+          await fsp.rm(source, { force: true });
+        } catch {
+          result.failed += 1;
+          continue;
+        }
+      } else {
+        result.failed += 1;
+        continue;
+      }
+    }
+    result.moved += 1;
+  }
+  return result;
 }
 
 const activeDownloads = new Map();
@@ -5994,7 +6054,38 @@ ipcMain.handle('clear-audio-cache', async () => {
 });
 
 ipcMain.handle('download-get-directory', () => {
-  return { path: getDownloadDirectory() };
+  return { path: getDownloadDirectory(), isDefault: !store.has(DOWNLOAD_DIRECTORY_SETTING_KEY) };
+});
+
+ipcMain.handle('choose-download-directory', async () => {
+  const current = getDownloadDirectory();
+  const isDefault = !store.has(DOWNLOAD_DIRECTORY_SETTING_KEY);
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return { canceled: true, path: current, isDefault };
+  }
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Choose download folder',
+    properties: ['openDirectory', 'createDirectory'],
+    defaultPath: current,
+  });
+  if (result.canceled || result.filePaths.length === 0) {
+    return { canceled: true, path: current, isDefault };
+  }
+  const selected = result.filePaths[0];
+  const migration = await migrateDownloadFiles(current, selected);
+  store.set(DOWNLOAD_DIRECTORY_SETTING_KEY, selected);
+  return { canceled: false, path: selected, isDefault: false, ...migration };
+});
+
+ipcMain.handle('reset-download-directory', async () => {
+  const current = getDownloadDirectory();
+  const fallback = getDefaultDownloadDirectory();
+  if (path.resolve(current) === path.resolve(fallback)) {
+    return { canceled: false, path: fallback, isDefault: true, moved: 0, failed: 0 };
+  }
+  const migration = await migrateDownloadFiles(current, fallback);
+  store.delete(DOWNLOAD_DIRECTORY_SETTING_KEY);
+  return { canceled: false, path: fallback, isDefault: true, ...migration };
 });
 
 ipcMain.handle('download-open-directory', async () => {
