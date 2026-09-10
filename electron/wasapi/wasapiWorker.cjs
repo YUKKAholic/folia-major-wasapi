@@ -118,22 +118,42 @@ const currentPositionMs = () => {
 
 // Streams a remote audio URL to a temp file so the (network-disabled) FFmpeg build can read it.
 const downloadToTemp = async (url) => {
-    const response = await fetch(url, { redirect: 'follow' });
-    if (!response.ok || !response.body) {
-        throw new Error(`HTTP ${response.status}`);
-    }
-    let ext = '.audio';
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 60000);
+    let tmp = null;
     try {
-        ext = path.extname(new URL(url).pathname) || ext;
-    } catch {
-        // Keep the fallback extension.
+        const response = await fetch(url, { redirect: 'follow', signal: controller.signal });
+        if (!response.ok || !response.body) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        let ext = '.audio';
+        try {
+            ext = path.extname(new URL(url).pathname) || ext;
+        } catch {
+            // Keep the fallback extension.
+        }
+        tmp = path.join(
+            os.tmpdir(),
+            `folia-wasapi-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`,
+        );
+        await pipeline(
+            Readable.fromWeb(response.body),
+            fs.createWriteStream(tmp),
+            { signal: controller.signal },
+        );
+        return tmp;
+    } catch (error) {
+        if (tmp) {
+            try {
+                fs.rmSync(tmp, { force: true });
+            } catch {
+                // Best effort.
+            }
+        }
+        throw error;
+    } finally {
+        clearTimeout(timer);
     }
-    const tmp = path.join(
-        os.tmpdir(),
-        `folia-wasapi-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`,
-    );
-    await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(tmp));
-    return tmp;
 };
 
 // Resolves a source descriptor to a local file FFmpeg can read, downloading a URL first.

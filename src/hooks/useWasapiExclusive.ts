@@ -85,9 +85,16 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
         if (!wasapi || !enableWasapiExclusive) return;
 
         const song = currentSong;
-        if (!song) {
+        const dropToSharedMode = () => {
             activeSourceRef.current = null;
+            // The engine is not going to play this source: hand the output back to Chromium so the
+            // (already running) HTML5 element is audible again instead of leaving it muted.
+            void wasapi.setRendererMuted(false);
             void wasapi.stop();
+        };
+
+        if (!song) {
+            dropToSharedMode();
             return;
         }
 
@@ -96,8 +103,7 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
             const resolved = await resolveWasapiSource(song, audioSrc);
             if (cancelled) return;
             if (!resolved) {
-                activeSourceRef.current = null;
-                void wasapi.stop();
+                dropToSharedMode();
                 return;
             }
             // The device is part of the key so switching endpoints restarts on the new one.
@@ -163,6 +169,8 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
                 return;
             }
             if (event.type === 'error') {
+                // Any engine-level failure means exclusive output is not live; let shared mode sound.
+                void wasapi.setRendererMuted(false);
                 if (lastMessageRef.current === event.message) return;
                 lastMessageRef.current = event.message;
                 setStatusMessage({
