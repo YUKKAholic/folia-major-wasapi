@@ -109,6 +109,11 @@ impl FoliaWasapi {
     }
 
     #[napi]
+    pub fn get_underrun_count(&self) -> napi::Result<f64> {
+        Ok(self.inner.get_underrun_count() as f64)
+    }
+
+    #[napi]
     pub fn get_diagnostics(&self) -> napi::Result<String> {
         let (events, buffer) = self.inner.get_diagnostics();
         Ok(format!("events={events} buffer={buffer}"))

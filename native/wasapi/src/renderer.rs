@@ -14,12 +14,13 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use windows::core::GUID;
 use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
 use windows::Win32::Media::Audio::{
     eConsole, eRender, IAudioClient, IAudioClock, IAudioRenderClient, IMMDevice,
     IMMDeviceEnumerator, AUDCLNT_SHAREMODE_EXCLUSIVE, AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
-    DEVICE_STATE_ACTIVE, WAVEFORMATEX, WAVE_FORMAT_PCM,
+    DEVICE_STATE_ACTIVE, WAVEFORMATEX, WAVEFORMATEXTENSIBLE, WAVEFORMATEXTENSIBLE_0, WAVE_FORMAT_PCM,
 };
 use windows::Win32::Media::Multimedia::WAVE_FORMAT_IEEE_FLOAT;
 use windows::Win32::System::Com::StructuredStorage::PropVariantClear;
@@ -29,6 +30,12 @@ use windows::Win32::System::Com::{
 };
 use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
 use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
+
+const WAVE_FORMAT_EXTENSIBLE: u16 = 0xFFFE;
+const KSDATAFORMAT_SUBTYPE_PCM: GUID =
+    GUID::from_u128(0x0000_0001_0000_0010_8000_00aa00389b71);
+const KSDATAFORMAT_SUBTYPE_IEEE_FLOAT: GUID =
+    GUID::from_u128(0x0000_0003_0000_0010_8000_00aa00389b71);
 
 const BUFFER_DURATION_HNS: i64 = 500_000; // 50 ms exclusive buffer
 const PERIOD_HNS: i64 = 500_000; // 50 ms event period (must equal buffer in exclusive mode)
@@ -90,6 +97,55 @@ impl PcmFormat {
             cbSize: 0,
         }
     }
+
+    /// True when the endpoint must be described with WAVEFORMATEXTENSIBLE: Windows rejects (or
+    /// misinterprets) >16-bit depths and >2 channels in a plain WAVEFORMATEX. A 24-bit song opened
+    /// as plain PCM is exactly the "electric noise / static" bug.
+    fn needs_waveformatextensible(self) -> bool {
+        self.is_float || self.bits_per_sample > 16 || self.channels > 2
+    }
+
+    fn to_waveformatextensible(self) -> WAVEFORMATEXTENSIBLE {
+        let block_align = self.block_align() as u16;
+        // The container is the full bytes-per-sample; the valid bits are the source depth. Packed
+        // 24-bit PCM (FFmpeg's pcm_s24le) is a 24-bit container, so both stay 24.
+        let container_bits = if self.is_float { 32 } else { self.bits_per_sample };
+        WAVEFORMATEXTENSIBLE {
+            Format: WAVEFORMATEX {
+                wFormatTag: WAVE_FORMAT_EXTENSIBLE,
+                nChannels: self.channels,
+                nSamplesPerSec: self.sample_rate,
+                nAvgBytesPerSec: self.sample_rate * block_align as u32,
+                nBlockAlign: block_align,
+                wBitsPerSample: container_bits,
+                cbSize: 22,
+            },
+            Samples: WAVEFORMATEXTENSIBLE_0 {
+                wValidBitsPerSample: self.bits_per_sample,
+            },
+            dwChannelMask: channel_mask_for(self.channels),
+            SubFormat: if self.is_float {
+                KSDATAFORMAT_SUBTYPE_IEEE_FLOAT
+            } else {
+                KSDATAFORMAT_SUBTYPE_PCM
+            },
+        }
+    }
+}
+
+// The standard speaker positions for common channel counts (WAVE_FORMAT_EXTENSIBLE channel mask).
+fn channel_mask_for(channels: u16) -> u32 {
+    match channels {
+        1 => 0x4,   // FC
+        2 => 0x3,   // FL | FR
+        3 => 0x7,   // FL | FR | FC
+        4 => 0x33,  // FL | FR | BL | BR
+        5 => 0x37,  // FL | FR | FC | BL | BR
+        6 => 0x3F,  // FL | FR | FC | LFE | BL | BR
+        7 => 0x13F, // + BC
+        8 => 0x63F, // + SL | SR
+        _ => 0,
+    }
 }
 
 // Statistics shared between the playback thread and the JS side.
@@ -104,6 +160,8 @@ struct Stats {
     sample_rate: AtomicU64,
     block_align: AtomicU64,
     buffer_frames: AtomicU64,
+    /** Buffers the render loop had to pad with silence because the ring ran dry (glitches). */
+    underruns: AtomicU64,
     state: Mutex<RendererState>,
 }
 
@@ -118,6 +176,7 @@ impl Default for Stats {
             sample_rate: AtomicU64::new(0),
             block_align: AtomicU64::new(0),
             buffer_frames: AtomicU64::new(0),
+            underruns: AtomicU64::new(0),
             state: Mutex::new(RendererState::Idle),
         }
     }
@@ -258,6 +317,10 @@ impl WasapiRenderer {
 
     pub fn get_frames_written(&self) -> u64 {
         self.shared.stats.frames_written.load(Ordering::SeqCst)
+    }
+
+    pub fn get_underrun_count(&self) -> u64 {
+        self.shared.stats.underruns.load(Ordering::SeqCst)
     }
 
     pub fn get_diagnostics(&self) -> (u64, u64) {
@@ -461,14 +524,20 @@ fn open_device(
     let client: IAudioClient = unsafe { device.Activate::<IAudioClient>(CLSCTX_ALL, None) }
         .map_err(|e| format!("failed to activate IAudioClient: {}", e.message()))?;
 
-    let wfx = format.to_waveformatex();
+    let wfx_plain = format.to_waveformatex();
+    let wfx_extensible = format.to_waveformatextensible();
+    let wfx: *const WAVEFORMATEX = if format.needs_waveformatextensible() {
+        &wfx_extensible.Format
+    } else {
+        &wfx_plain
+    };
     unsafe {
         client.Initialize(
             AUDCLNT_SHAREMODE_EXCLUSIVE,
             AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
             BUFFER_DURATION_HNS,
             PERIOD_HNS,
-            &wfx,
+            wfx,
             None,
         )
     }
@@ -573,6 +642,7 @@ fn render_loop(
             take
         };
         if written < bytes_per_buffer {
+            shared.stats.underruns.fetch_add(1, Ordering::SeqCst);
             for byte in dst.iter_mut().skip(written) {
                 *byte = 0;
             }

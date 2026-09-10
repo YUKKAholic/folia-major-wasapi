@@ -407,6 +407,11 @@ const startDecode = ({ filePath, sampleRate, channels, startSec, codec, generati
                 const endedPosition = currentPositionMs();
                 playing = false;
                 clearPositionTimer();
+                try {
+                    if (renderer) wlog(`underruns=${renderer.getUnderrunCount()} events=${renderer.getDiagnostics()}`);
+                } catch {
+                    // Diagnostics are best effort.
+                }
                 // Keep the endpoint for the next track to reuse; Stop+Reset clears the buffer.
                 stopRenderer();
                 post({ type: 'ended', positionMs: endedPosition });
