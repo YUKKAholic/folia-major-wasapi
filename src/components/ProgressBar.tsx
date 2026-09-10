@@ -170,11 +170,14 @@ const ProgressBar: React.FC<ProgressBarProps> = ({
 
             {wasapiMode !== 'off' && (
                 <span
-                    className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full border whitespace-nowrap shrink-0"
+                    className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap shrink-0"
                     style={{
-                        color: wasapiMode === 'exclusive' ? primaryColor : secondaryColor,
-                        borderColor: trackColor,
+                        color: '#ffffff',
+                        backgroundColor: wasapiMode === 'exclusive'
+                            ? 'rgba(22, 163, 74, 0.95)'
+                            : 'rgba(113, 113, 122, 0.9)',
                     }}
+                    title={wasapiMode === 'exclusive' ? 'WASAPI Exclusive' : 'WASAPI Shared'}
                 >
                     {wasapiMode === 'exclusive' ? t('options.wasapiModeExclusive') : t('options.wasapiModeShared')}
                 </span>

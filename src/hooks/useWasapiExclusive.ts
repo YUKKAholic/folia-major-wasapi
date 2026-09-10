@@ -144,6 +144,15 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
         // (already running) HTML5 element is audible again instead of leaving it muted.
         void window.electron?.wasapi?.setRendererMuted(false);
         void window.electron?.wasapi?.stop();
+        // If exclusive had grabbed the endpoint and left the element stalled, nudge it back.
+        const element = audioRef.current;
+        if (
+            element
+            && element.paused
+            && usePlaybackStore.getState().playerState === PlayerState.PLAYING
+        ) {
+            void element.play().catch(() => {});
+        }
     };
 
     // Toggling the setting: enter cleanly, or release the engine and restore Chromium output.
@@ -274,8 +283,10 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
                     // so we never re-download and stall Chromium's stream again.
                     if (active.isUrl) onlineSuspendedRef.current = true;
                 }
+                // Fully release the engine and unmute so Chromium's shared output recovers instead
+                // of being left contending for the endpoint.
+                dropToSharedMode();
                 applyMode('shared', true);
-                void wasapi.setRendererMuted(false);
                 if (lastMessageRef.current !== event.message) {
                     lastMessageRef.current = event.message;
                     setStatusMessage({
