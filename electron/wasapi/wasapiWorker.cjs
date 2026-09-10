@@ -51,6 +51,13 @@ let playbackBusy = false;
 let pendingPlayback = null;
 /** Bumped per playback; stale FFmpeg children and events are ignored by generation. */
 let playbackGeneration = 0;
+/** Format+device key of the currently open renderer, so consecutive tracks can reuse the stream
+ *  instead of closing and reopening it (a running exclusive stream releases slowly, and the
+ *  reopen then races the release with AUDCLNT_E_DEVICE_IN_USE). */
+let openFormatKey = null;
+/** Device clock value (ms) at the point the current track started; the device clock is cumulative
+ *  across a reused stream, so playback position is (device - this offset). */
+let positionOffsetMs = 0;
 /** Shared debug log file (main process path); best-effort. */
 let logPath = null;
 
@@ -130,6 +137,8 @@ const closeRenderer = () => {
         }
         renderer = null;
     }
+    openFormatKey = null;
+    positionOffsetMs = 0;
 };
 
 const clearPositionTimer = () => {
@@ -142,7 +151,7 @@ const clearPositionTimer = () => {
 const currentPositionMs = () => {
     if (!renderer) return positionBaseMs;
     try {
-        return positionBaseMs + renderer.getPositionMs();
+        return positionBaseMs + (renderer.getPositionMs() - positionOffsetMs);
     } catch {
         return positionBaseMs;
     }
@@ -395,12 +404,12 @@ const startDecode = ({ filePath, sampleRate, channels, startSec, codec, generati
             if (generation !== playbackGeneration || !playing) return;
             const buffered = renderer ? renderer.getBufferedBytes() : 0;
             if (buffered <= 0) {
+                const endedPosition = currentPositionMs();
                 playing = false;
                 clearPositionTimer();
-                // Release the endpoint now: leaving it held would silence the next track's shared
-                // playback and make the following exclusive open fail with DEVICE_IN_USE.
-                closeRenderer();
-                post({ type: 'ended', positionMs: currentPositionMs() });
+                // Keep the endpoint for the next track to reuse; Stop+Reset clears the buffer.
+                stopRenderer();
+                post({ type: 'ended', positionMs: endedPosition });
                 return;
             }
             setTimeout(waitDrain, 100);
@@ -441,7 +450,7 @@ const startPlayback = async ({ source, startSec, deviceId: messageDeviceId }, ge
     killFfmpeg();
     clearFeedQueue();
     clearPositionTimer();
-    closeRenderer();
+    // The renderer is intentionally NOT closed here: the reuse/else branch below decides.
 
     // Drop the previous download only when the source actually changed (local file, or a new URL).
     const nextUrl = source && typeof source.url === 'string' ? source.url : null;
@@ -465,8 +474,27 @@ const startPlayback = async ({ source, startSec, deviceId: messageDeviceId }, ge
     wlog(`format sr=${format.sampleRate} ch=${format.channels} bits=${format.bitsPerSample} codec=${codec} openBits=${openBits}`);
 
     const targetDeviceId = typeof messageDeviceId === 'string' ? messageDeviceId : deviceId;
-    wlog(`openExclusive device=${targetDeviceId || '(default)'}`);
-    renderer = await openRendererWithRetry(targetDeviceId, format, openBits);
+    const formatKey = `${targetDeviceId || '(default)'}|${format.sampleRate}|${format.channels}|${openBits}`;
+    if (renderer && openFormatKey === formatKey) {
+        // Same device and format: reuse the already-open exclusive stream. Stop+Reset keeps the
+        // endpoint held, so there is no close/reopen race with the previous track.
+        wlog('reuse open exclusive stream');
+        // The device clock keeps counting across a reused stream; anchor the new track to it.
+        try {
+            positionOffsetMs = renderer.getPositionMs();
+        } catch {
+            positionOffsetMs = 0;
+        }
+        stopRenderer();
+        clearFeedQueue();
+        clearPositionTimer();
+    } else {
+        closeRenderer();
+        wlog(`openExclusive device=${targetDeviceId || '(default)'}`);
+        renderer = await openRendererWithRetry(targetDeviceId, format, openBits);
+        openFormatKey = formatKey;
+        positionOffsetMs = 0;
+    }
 
     positionBaseMs = startSec * 1000;
     playing = true;
@@ -552,9 +580,10 @@ parentPort.on('message', (msg) => {
             playing = false;
             killFfmpeg();
             clearFeedQueue();
+            // Report the position before Stop (Stop resets the stream position counter).
+            post({ type: 'paused', positionMs: currentPositionMs() });
             stopRenderer();
             clearPositionTimer();
-            post({ type: 'paused', positionMs: currentPositionMs() });
             break;
         case 'stop':
             pendingPlayback = null;

@@ -315,17 +315,27 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
                 applyMode('shared', true);
                 if (lastMessageRef.current !== event.message) {
                     lastMessageRef.current = event.message;
+                    // AUDCLNT_E_DEVICE_IN_USE on the same endpoint Chromium plays to: shared and
+                    // exclusive cannot coexist, so tell the listener the actionable fix.
+                    const isDeviceInUse = /0x8889000a/i.test(event.message || '');
                     setStatusMessage({
                         type: 'info',
-                        text: event.message
-                            ? `${i18n.t('options.wasapiExclusiveFallback')} (${event.message})`
-                            : i18n.t('options.wasapiExclusiveFallback'),
+                        text: isDeviceInUse
+                            ? i18n.t('options.wasapiDeviceConflict')
+                            : (event.message
+                                ? `${i18n.t('options.wasapiExclusiveFallback')} (${event.message})`
+                                : i18n.t('options.wasapiExclusiveFallback')),
                     });
                 }
                 return;
             }
-            if (event.type === 'ended' || event.type === 'stopped') {
-                // Engine no longer owns the output; let the transport be audible again.
+            if (event.type === 'ended') {
+                // The queue continues on the same exclusive stream (the worker kept the endpoint
+                // open for reuse); leave the output as it is.
+                return;
+            }
+            if (event.type === 'stopped') {
+                // Engine released the endpoint; let the transport be audible again.
                 applyMode('shared');
                 restoreChromiumOutput(true);
                 return;

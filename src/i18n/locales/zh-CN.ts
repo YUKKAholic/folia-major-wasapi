@@ -1902,6 +1902,7 @@ export default {
     "wasapiExclusiveDesc": "仅 Windows。使用 WASAPI 独占模式直通输出，绕过系统混音与重采样以获得 bit-perfect 音质；设备必须原生支持音源的采样率。启用后会绕过均衡器、音效与音量控制，且仅支持本地文件。",
     "wasapiExclusiveError": "WASAPI 独占播放失败",
     "wasapiExclusiveFallback": "当前歌曲/设备不支持 WASAPI 独占，已回退到共享模式播放",
+    "wasapiDeviceConflict": "独占设备与播放输出设备相同：Windows 不允许共享与独占同时占用同一设备。请在设置里把「当前播放声卡」换成另一台设备，独占即可生效。",
     "wasapiNotBitPerfect": "音源位深超出独占输出支持范围，已按 16-bit 输出",
     "wasapiDevice": "独占输出设备",
     "wasapiDeviceDefault": "系统默认设备",

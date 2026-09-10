@@ -1814,6 +1814,7 @@ export default {
     "wasapiExclusiveDesc": "Khusus Windows. Memutar melalui mode eksklusif WASAPI, melewati mixer sistem dan resampling untuk pemutaran bit-perfect; perangkat harus mendukung sample rate sumber secara native. Saat aktif, ekualiser, efek, dan kontrol volume dilewati, dan hanya file lokal yang didukung.",
     "wasapiExclusiveError": "Pemutaran eksklusif WASAPI gagal",
     "wasapiExclusiveFallback": "Trek/perangkat ini tidak mendukung WASAPI eksklusif; memutar melalui mode bersama",
+    "wasapiDeviceConflict": "Perangkat eksklusif sama dengan output pemutaran: Windows tidak mengizinkan mode bersama dan eksklusif memakai satu endpoint sekaligus. Pilih perangkat berbeda untuk output pemutaran saat ini di Pengaturan, maka eksklusif akan berfungsi.",
     "wasapiNotBitPerfect": "Kedalaman bit sumber melebihi dukungan output eksklusif; memutar pada 16-bit",
     "wasapiDevice": "Perangkat output eksklusif",
     "wasapiDeviceDefault": "Perangkat default sistem",

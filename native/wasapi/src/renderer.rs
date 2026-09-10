@@ -356,10 +356,19 @@ fn playback_thread(shared: Arc<Shared>, cmd_rx: Receiver<Command>) {
             }
             Command::Stop { resp } => {
                 let result = if let Some(c) = client.as_ref() {
-                    unsafe { c.Stop().map_err(|e| e.message()) }
+                    unsafe {
+                        let stop = c.Stop();
+                        // Reset clears any pending buffer so a reused stream starts clean.
+                        if stop.is_ok() {
+                            let _ = c.Reset();
+                        }
+                        stop.map_err(|e| e.message())
+                    }
                 } else {
                     Ok(())
                 };
+                // The stream position restarts when the stream is reused for another track.
+                shared.stats.position_frames.store(0, Ordering::SeqCst);
                 *shared.stats.state.lock().unwrap() = RendererState::Stopped;
                 let _ = resp.send(result);
             }

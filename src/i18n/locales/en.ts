@@ -1901,6 +1901,7 @@ export default {
     "wasapiExclusiveDesc": "Windows only. Outputs through WASAPI exclusive mode, bypassing the system mixer and resampling for bit-perfect playback; the device must natively support the source sample rate. While active, the equalizer, effects and volume control are bypassed, and only local files are supported.",
     "wasapiExclusiveError": "WASAPI exclusive playback failed",
     "wasapiExclusiveFallback": "This track/device does not support WASAPI exclusive; playing through shared mode",
+    "wasapiDeviceConflict": "The exclusive device is the same as the playback output device: Windows does not allow shared and exclusive to use one endpoint at once. Pick a different device for the current playback output in Settings and exclusive will work.",
     "wasapiNotBitPerfect": "The source bit depth exceeds exclusive output support; playing at 16-bit",
     "wasapiDevice": "Exclusive output device",
     "wasapiDeviceDefault": "System default device",
