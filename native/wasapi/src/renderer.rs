@@ -357,7 +357,27 @@ fn playback_thread(shared: Arc<Shared>, cmd_rx: Receiver<Command>) {
                                 *shared.stats.state.lock().unwrap() = RendererState::Playing;
                                 let _ = resp.send(Ok(()));
                                 // Block until stop or close is requested.
-                                render_loop(c, r, clk, &shared, evt, &cmd_rx);
+                                match render_loop(c, r, clk, &shared, evt, &cmd_rx) {
+                                    RenderLoopExit::Stopped => {
+                                        // Keep the client open for the next reused track.
+                                    }
+                                    RenderLoopExit::Closed(close_resp) => {
+                                        // Release everything BEFORE acknowledging close: a caller that
+                                        // reopens the endpoint right after must not race the release.
+                                        if let Some(c) = client.as_ref() {
+                                            unsafe { let _ = c.Stop(); }
+                                        }
+                                        *shared.stats.state.lock().unwrap() = RendererState::Closed;
+                                        if let Some(evt) = event_handle.take() {
+                                            unsafe { let _ = CloseHandle(evt); }
+                                        }
+                                        drop(clock.take());
+                                        drop(render.take());
+                                        drop(client.take());
+                                        let _ = close_resp.send(Ok(()));
+                                        break 'outer;
+                                    }
+                                }
                             }
                             Err(e) => {
                                 let _ = resp.send(Err(e.message()));
@@ -472,6 +492,13 @@ fn open_device(
     Ok((client, render, clock, event, buffer_frames))
 }
 
+// Why the render loop returned: a Stop keeps the client alive for reuse; a Close hands the close
+// response back to the thread body so it can release the COM interfaces before acknowledging.
+enum RenderLoopExit {
+    Stopped,
+    Closed(Sender<Result<(), String>>),
+}
+
 // The render loop: waits on the buffer event and writes the WHOLE buffer each time
 // (exclusive event-driven mode uses ping-pong double buffering, so the packet size must
 // always equal the buffer size). Mirrors the IAudioClock position back to shared stats.
@@ -482,7 +509,7 @@ fn render_loop(
     shared: &Arc<Shared>,
     event_handle: HANDLE,
     cmd_rx: &Receiver<Command>,
-) {
+) -> RenderLoopExit {
     let buffer_frames = shared.stats.buffer_frames.load(Ordering::SeqCst) as u32;
     let bytes_per_frame = shared.stats.block_align.load(Ordering::SeqCst) as usize;
     let bytes_per_buffer = buffer_frames as usize * bytes_per_frame;
@@ -495,13 +522,13 @@ fn render_loop(
                     unsafe { let _ = client.Stop(); }
                     *shared.stats.state.lock().unwrap() = RendererState::Stopped;
                     let _ = resp.send(Ok(()));
-                    return;
+                    return RenderLoopExit::Stopped;
                 }
                 Command::Close { resp } => {
-                    unsafe { let _ = client.Stop(); }
-                    *shared.stats.state.lock().unwrap() = RendererState::Closed;
-                    let _ = resp.send(Ok(()));
-                    return;
+                    // Do NOT release or acknowledge here: the thread body owns the interfaces and
+                    // will drop them. Acknowledging first would let the caller reopen while the
+                    // endpoint is still held (AUDCLNT_E_DEVICE_IN_USE).
+                    return RenderLoopExit::Closed(resp);
                 }
                 _ => {}
             }

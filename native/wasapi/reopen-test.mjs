@@ -1,8 +1,9 @@
 // native/wasapi/reopen-test.mjs
 //
-// Hammers the close→open cycle: exclusive open, play briefly, stop+close, then immediately reopen
-// the same endpoint. Validates that close() releases the device before returning, so a rapid
-// track switch cannot hit AUDCLNT_E_DEVICE_IN_USE (0x8889000a).
+// Hammers the close→open cycle while the stream is STILL PLAYING: exclusive open, play briefly,
+// close straight from the render loop, then immediately reopen the same endpoint with a different
+// format. Validates that close() releases the device before returning, so a rapid track switch with
+// a format change cannot hit AUDCLNT_E_DEVICE_IN_USE (0x8889000a).
 
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
@@ -15,24 +16,32 @@ const native = require(join(repo, 'electron', 'wasapi', 'folia_wasapi.node'));
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const devices = native.enumerateOutputDevices();
-const device = devices.find((d) => d.name.includes('Realtek')) ?? devices[0];
+const device = devices.find((d) => d.name.includes('Macaron'))
+    ?? devices.find((d) => d.name.includes('Realtek'))
+    ?? devices[0];
 console.log('device:', device.name);
 
-const format = { sampleRate: 48000, channels: 2, bitsPerSample: 16, isFloat: false };
-const pcm = Buffer.alloc(48000 * 2 * 2); // 0.5s stereo silence
+const formats = [
+    { sampleRate: 48000, channels: 2, bitsPerSample: 16, isFloat: false },
+    { sampleRate: 44100, channels: 2, bitsPerSample: 24, isFloat: false },
+    { sampleRate: 48000, channels: 2, bitsPerSample: 24, isFloat: false },
+    { sampleRate: 44100, channels: 2, bitsPerSample: 16, isFloat: false },
+];
 
 let ok = 0;
 for (let i = 0; i < 6; i += 1) {
+    const format = formats[i % formats.length];
+    const pcm = Buffer.alloc(format.sampleRate * format.channels * (format.bitsPerSample / 8));
     const renderer = new native.FoliaWasapi();
     try {
         renderer.openExclusive(device.id, format);
         renderer.start();
         renderer.writePcm(pcm);
         await sleep(120);
-        renderer.stop();
+        // Close WHILE PLAYING (the render loop owns the client here).
         renderer.close();
         ok += 1;
-        console.log('cycle', i, 'ok');
+        console.log('cycle', i, `${format.sampleRate}/${format.bitsPerSample} ok`);
     } catch (error) {
         console.log('cycle', i, 'FAILED:', error.message);
     }

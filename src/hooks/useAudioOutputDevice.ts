@@ -65,8 +65,15 @@ export const useAudioOutputDevice = ({
             || normalizedTargetDeviceId === 'default'
             || normalizedTargetDeviceId === 'communications';
 
-        // A forced recovery also has to wake the context: exclusive mode can leave it suspended.
-        if (force && audioContext?.state === 'suspended') {
+        // A forced recovery also has to rebuild the AudioContext's output stream: after exclusive
+        // mode invalidated it, re-targeting the SAME device is a spec-level no-op, so suspend/resume
+        // to tear the stream down and let it re-open. Then the element pause+play below re-acquires.
+        if (force && audioContext) {
+            try {
+                await audioContext.suspend();
+            } catch {
+                // Ignore; keep going with the resume/sink re-target.
+            }
             try {
                 await audioContext.resume();
             } catch {
