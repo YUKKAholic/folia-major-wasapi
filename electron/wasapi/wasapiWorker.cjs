@@ -397,6 +397,9 @@ const startDecode = ({ filePath, sampleRate, channels, startSec, codec, generati
             if (buffered <= 0) {
                 playing = false;
                 clearPositionTimer();
+                // Release the endpoint now: leaving it held would silence the next track's shared
+                // playback and make the following exclusive open fail with DEVICE_IN_USE.
+                closeRenderer();
                 post({ type: 'ended', positionMs: currentPositionMs() });
                 return;
             }

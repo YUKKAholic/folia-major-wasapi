@@ -102,6 +102,10 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
     const watchdogRef = useRef<number | null>(null);
     const lastMessageRef = useRef<string | null>(null);
     const lastModeRef = useRef<WasapiMode>('off');
+    /** True while the engine has actually taken the output (muted Chromium). */
+    const exclusiveActiveRef = useRef(false);
+    /** After a failed attempt, skip exclusive for a moment so it cannot thrash. */
+    const exclusiveCooldownUntilRef = useRef(0);
     /** Once an online track fails exclusive, stop trying online for the rest of the session. */
     const onlineSuspendedRef = useRef(false);
 
@@ -126,33 +130,44 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
         }
     };
 
+    /**
+     * Hands the output back to Chromium. `rebuild` forces a pause+play so Chromium recreates its
+     * audio stream after exclusive mode tore it down; it must only run once the endpoint is
+     * released (the worker's `stopped`/`ended` events), or Chromium cannot acquire it back.
+     */
+    const restoreChromiumOutput = (rebuild = false) => {
+        void window.electron?.wasapi?.setRendererMuted(false);
+        if (!rebuild || !exclusiveActiveRef.current) return;
+        exclusiveActiveRef.current = false;
+        const element = audioRef.current;
+        if (element && usePlaybackStore.getState().playerState === PlayerState.PLAYING) {
+            try {
+                element.pause();
+            } catch {
+                // ignore
+            }
+            void element.play().catch(() => {});
+        }
+    };
+
     // If the engine neither starts nor reports a problem in time, stop trying and restore sound.
     const armWatchdog = (timeoutMs = WATCHDOG_MS) => {
         clearWatchdog();
         watchdogRef.current = window.setTimeout(() => {
             watchdogRef.current = null;
             activeSourceRef.current = null;
-            void window.electron?.wasapi?.setRendererMuted(false);
             void window.electron?.wasapi?.stop();
+            restoreChromiumOutput(true);
         }, timeoutMs);
     };
 
     const dropToSharedMode = () => {
         activeSourceRef.current = null;
         applyMode('shared');
-        // The engine is not going to play this source: hand the output back to Chromium so the
-        // (already running) HTML5 element is audible again instead of leaving it muted.
-        void window.electron?.wasapi?.setRendererMuted(false);
+        // Release the engine and unmute now; the worker's `stopped` event rebuilds Chromium's
+        // output once the endpoint is actually free.
         void window.electron?.wasapi?.stop();
-        // If exclusive had grabbed the endpoint and left the element stalled, nudge it back.
-        const element = audioRef.current;
-        if (
-            element
-            && element.paused
-            && usePlaybackStore.getState().playerState === PlayerState.PLAYING
-        ) {
-            void element.play().catch(() => {});
-        }
+        restoreChromiumOutput(false);
     };
 
     // Toggling the setting: enter cleanly, or release the engine and restore Chromium output.
@@ -167,14 +182,16 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
         } else {
             clearWatchdog();
             void wasapi.stop();
-            void wasapi.setRendererMuted(false);
             activeSourceRef.current = null;
+            exclusiveActiveRef.current = false;
             applyMode('off');
+            restoreChromiumOutput(false);
         }
         return () => {
             clearWatchdog();
             void wasapi.stop();
-            void wasapi.setRendererMuted(false);
+            exclusiveActiveRef.current = false;
+            restoreChromiumOutput(false);
         };
     }, [enableWasapiExclusive]);
 
@@ -214,6 +231,12 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
             const key = `${wasapiDeviceId || 'default'}|${resolved.key}`;
             // Already fell back for this source: stay on shared mode, do not retry.
             if (failedSourcesRef.current.has(key)) return;
+            // A recent attempt failed on this device; keep shared output for a moment so a busy
+            // endpoint cannot turn into an exclusive/shared toggle loop.
+            if (Date.now() < exclusiveCooldownUntilRef.current) {
+                dropToSharedMode();
+                return;
+            }
 
             const active = activeSourceRef.current;
             if (active && active.key === key) {
@@ -268,6 +291,7 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
             clearWatchdog();
             if (event.type === 'started') {
                 applyMode('exclusive', true);
+                exclusiveActiveRef.current = true;
                 void wasapi.setRendererMuted(true);
                 if (!event.bitPerfect && lastMessageRef.current !== 'not-bit-perfect') {
                     lastMessageRef.current = 'not-bit-perfect';
@@ -283,6 +307,8 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
                     // so we never re-download and stall Chromium's stream again.
                     if (active.isUrl) onlineSuspendedRef.current = true;
                 }
+                // Give the endpoint a moment before trying exclusive again.
+                exclusiveCooldownUntilRef.current = Date.now() + 3000;
                 // Fully release the engine and unmute so Chromium's shared output recovers instead
                 // of being left contending for the endpoint.
                 dropToSharedMode();
@@ -301,13 +327,13 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
             if (event.type === 'ended' || event.type === 'stopped') {
                 // Engine no longer owns the output; let the transport be audible again.
                 applyMode('shared');
-                void wasapi.setRendererMuted(false);
+                restoreChromiumOutput(true);
                 return;
             }
             if (event.type === 'error') {
                 // Any engine-level failure means exclusive output is not live; let shared mode sound.
                 applyMode('shared', true);
-                void wasapi.setRendererMuted(false);
+                restoreChromiumOutput(true);
                 if (lastMessageRef.current === event.message) return;
                 lastMessageRef.current = event.message;
                 setStatusMessage({
