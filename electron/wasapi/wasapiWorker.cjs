@@ -40,6 +40,8 @@ let ffmpegPath = '';
 let positionBaseMs = 0;
 let playing = false;
 let positionTimer = null;
+/** Explicit exclusive output device id ('' = system default). */
+let deviceId = '';
 /** Temp file backing a downloaded URL source, removed when playback moves on. */
 let tempSourcePath = null;
 
@@ -253,7 +255,7 @@ const startDecode = ({ filePath, sampleRate, channels, startSec, codec }) => {
     });
 };
 
-const startPlayback = async ({ source, startSec, deviceId }) => {
+const startPlayback = async ({ source, startSec, deviceId: messageDeviceId }) => {
     killFfmpeg();
     clearPositionTimer();
     closeRenderer();
@@ -271,8 +273,9 @@ const startPlayback = async ({ source, startSec, deviceId }) => {
     const { codec, openBits } = pickCodec(format.bitsPerSample);
     const bitPerfect = openBits >= format.bitsPerSample;
 
+    const targetDeviceId = typeof messageDeviceId === 'string' ? messageDeviceId : deviceId;
     renderer = new native.FoliaWasapi();
-    renderer.openExclusive(deviceId || '', {
+    renderer.openExclusive(targetDeviceId || '', {
         sampleRate: format.sampleRate,
         channels: format.channels,
         bitsPerSample: openBits,
@@ -310,6 +313,9 @@ parentPort.on('message', (msg) => {
             }
             break;
         }
+        case 'setDevice':
+            deviceId = typeof msg.deviceId === 'string' ? msg.deviceId : '';
+            break;
         case 'play':
         case 'resume':
         case 'seek':

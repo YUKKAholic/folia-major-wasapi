@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AudioLines, ChevronRight, ListFilter, Monitor, PlayCircle, Radio, RefreshCw, Settings2, Timer } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useShallow } from 'zustand/react/shallow';
@@ -50,20 +50,24 @@ const PlaybackSettingsSubview: React.FC<PlaybackSettingsSubviewProps> = ({
         audioOutputDeviceId,
         enableTranscodeFallback,
         enableWasapiExclusive,
+        wasapiDeviceId,
         neteaseScrobbleEnabled,
         queueAddBehavior,
         onToggleTranscodeFallback,
         onToggleWasapiExclusive,
+        onSetWasapiDeviceId,
         onToggleNeteaseScrobble,
         onQueueAddBehaviorChange,
     } = useAudioSettingsStore(useShallow(state => ({
         audioOutputDeviceId: state.audioOutputDeviceId,
         enableTranscodeFallback: state.enableTranscodeFallback,
         enableWasapiExclusive: state.enableWasapiExclusive,
+        wasapiDeviceId: state.wasapiDeviceId,
         neteaseScrobbleEnabled: state.neteaseScrobbleEnabled,
         queueAddBehavior: state.queueAddBehavior,
         onToggleTranscodeFallback: state.handleToggleTranscodeFallback,
         onToggleWasapiExclusive: state.handleToggleWasapiExclusive,
+        onSetWasapiDeviceId: state.handleSetWasapiDeviceId,
         onToggleNeteaseScrobble: state.handleToggleNeteaseScrobble,
         onQueueAddBehaviorChange: state.handleSetQueueAddBehavior,
     })));
@@ -101,6 +105,23 @@ const PlaybackSettingsSubview: React.FC<PlaybackSettingsSubviewProps> = ({
         setErrorKey: setAudioOutputDevicesErrorKey,
     } = useAudioOutputDevices(audioOutputDeviceId);
     const [isSelectingAudioOutput, setIsSelectingAudioOutput] = useState(false);
+    const [wasapiDevices, setWasapiDevices] = useState<WasapiDevice[]>([]);
+    // Enumerated on demand while exclusive mode is on: the native list includes endpoints that
+    // Chromium's device picker hides, and it is what the WASAPI engine can actually open.
+    useEffect(() => {
+        const wasapi = window.electron?.wasapi;
+        if (!enableWasapiExclusive || !wasapi) {
+            setWasapiDevices([]);
+            return;
+        }
+        let cancelled = false;
+        void wasapi.listDevices().then((devices) => {
+            if (!cancelled) setWasapiDevices(devices ?? []);
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [enableWasapiExclusive]);
     const mediaDevicesWithAudioOutput = navigator.mediaDevices as MediaDevicesWithAudioOutput | undefined;
     const accentOutlineColor = theme?.accentColor || (isDaylight ? '#44403c' : '#f4f4f5');
     const toggleOffBackgroundClass = isDaylight ? 'bg-zinc-300/90' : 'bg-white/10';
@@ -425,16 +446,35 @@ const PlaybackSettingsSubview: React.FC<PlaybackSettingsSubviewProps> = ({
                         </div>
                     )}
                     {window.electron?.wasapi && (
-                        <div className="flex items-start justify-between gap-3 border-b border-current/10 pb-4">
-                            <div className="space-y-1">
-                                <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-                                    {t('options.wasapiExclusive')}
+                        <div className="space-y-3 border-b border-current/10 pb-4">
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="space-y-1">
+                                    <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                                        {t('options.wasapiExclusive')}
+                                    </div>
+                                    <div className="text-[11px] opacity-50 max-w-[420px]" style={{ color: 'var(--text-secondary)' }}>
+                                        {t('options.wasapiExclusiveDesc')}
+                                    </div>
                                 </div>
-                                <div className="text-[11px] opacity-50 max-w-[420px]" style={{ color: 'var(--text-secondary)' }}>
-                                    {t('options.wasapiExclusiveDesc')}
-                                </div>
+                                {renderToggle(enableWasapiExclusive, () => onToggleWasapiExclusive(!enableWasapiExclusive))}
                             </div>
-                            {renderToggle(enableWasapiExclusive, () => onToggleWasapiExclusive(!enableWasapiExclusive))}
+                            {enableWasapiExclusive && (
+                                <div className="space-y-2">
+                                    <div className="text-[11px] opacity-50" style={{ color: 'var(--text-secondary)' }}>
+                                        {t('options.wasapiDevice')}
+                                    </div>
+                                    <CustomSelect
+                                        value={wasapiDeviceId}
+                                        onChange={(val) => onSetWasapiDeviceId(val)}
+                                        options={[
+                                            { value: '', label: t('options.wasapiDeviceDefault') },
+                                            ...wasapiDevices.map((device) => ({ value: device.id, label: device.name })),
+                                        ]}
+                                        isDaylight={isDaylight}
+                                        theme={theme}
+                                    />
+                                </div>
+                            )}
                         </div>
                     )}
                     <div className="flex items-start justify-between gap-3">

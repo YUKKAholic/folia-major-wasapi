@@ -5420,6 +5420,7 @@ app.whenReady().then(async () => {
       ipcMain.handle('wasapi-resume', (_event, source, startSec) => wasapiEngine.resume(source, startSec));
       ipcMain.handle('wasapi-seek', (_event, source, startSec) => wasapiEngine.seek(source, startSec));
       ipcMain.handle('wasapi-stop', () => wasapiEngine.stop());
+      ipcMain.handle('wasapi-set-device', (_event, deviceId) => wasapiEngine.setDevice(deviceId));
       ipcMain.handle('wasapi-set-renderer-muted', (_event, muted) => {
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.setAudioMuted(Boolean(muted));

@@ -1903,6 +1903,8 @@ export default {
     "wasapiExclusiveError": "WASAPI 独占播放失败",
     "wasapiExclusiveFallback": "当前歌曲/设备不支持 WASAPI 独占，已回退到共享模式播放",
     "wasapiNotBitPerfect": "音源位深超出独占输出支持范围，已按 16-bit 输出",
+    "wasapiDevice": "独占输出设备",
+    "wasapiDeviceDefault": "系统默认设备",
     "audioOutputDevice": "当前播放声卡",
     "audioOutputDeviceDesc": "切换当前播放器的音频输出设备。在支持 setSinkId 时可使用。",
     "audioOutputRefresh": "刷新",

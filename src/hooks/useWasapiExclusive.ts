@@ -45,6 +45,7 @@ const resolveWasapiSource = async (
 
 export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>) => {
     const enableWasapiExclusive = useAudioSettingsStore(state => state.enableWasapiExclusive);
+    const wasapiDeviceId = useAudioSettingsStore(state => state.wasapiDeviceId);
     const currentSong = usePlaybackStore(state => state.currentSong);
     const audioSrc = usePlaybackStore(state => state.audioSrc);
     const playerState = usePlaybackStore(selectDisplayPlayerState);
@@ -71,6 +72,13 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
         };
     }, [enableWasapiExclusive]);
 
+    // Keep the engine's exclusive endpoint in sync with the setting.
+    useEffect(() => {
+        const wasapi = window.electron?.wasapi;
+        if (!wasapi || !enableWasapiExclusive) return;
+        void wasapi.setDevice(wasapiDeviceId);
+    }, [enableWasapiExclusive, wasapiDeviceId]);
+
     // Play / pause / resume routing for the current song.
     useEffect(() => {
         const wasapi = window.electron?.wasapi;
@@ -92,12 +100,15 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
                 void wasapi.stop();
                 return;
             }
+            // The device is part of the key so switching endpoints restarts on the new one.
+            const key = `${wasapiDeviceId || 'default'}|${resolved.key}`;
             // Already fell back for this source: stay on shared mode, do not retry.
-            if (failedSourcesRef.current.has(resolved.key)) return;
+            if (failedSourcesRef.current.has(key)) return;
 
             if (playerState === PlayerState.PLAYING) {
-                if (activeSourceRef.current?.key !== resolved.key) {
-                    activeSourceRef.current = resolved;
+                if (activeSourceRef.current?.key !== key) {
+                    activeSourceRef.current = { source: resolved.source, key };
+                    void wasapi.setDevice(wasapiDeviceId);
                     void wasapi.setRendererMuted(true);
                     void wasapi.play(resolved.source, 0);
                 } else {
@@ -111,7 +122,7 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
         return () => {
             cancelled = true;
         };
-    }, [enableWasapiExclusive, currentSong, audioSrc, playerState, audioRef]);
+    }, [enableWasapiExclusive, wasapiDeviceId, currentSong, audioSrc, playerState, audioRef]);
 
     // Seek mirroring: the engine restarts at the element's position whenever a seek lands.
     useEffect(() => {

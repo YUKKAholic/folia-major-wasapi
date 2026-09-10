@@ -1902,6 +1902,8 @@ export default {
     "wasapiExclusiveError": "WASAPI exclusive playback failed",
     "wasapiExclusiveFallback": "This track/device does not support WASAPI exclusive; playing through shared mode",
     "wasapiNotBitPerfect": "The source bit depth exceeds exclusive output support; playing at 16-bit",
+    "wasapiDevice": "Exclusive output device",
+    "wasapiDeviceDefault": "System default device",
     "audioOutputDevice": "Current Output Device",
     "audioOutputDeviceDesc": "Switch the audio output used by the current player. Electron desktop is the primary target, and browser environments also work when setSinkId is available.",
     "audioOutputRefresh": "Refresh",

@@ -117,6 +117,8 @@ const createWasapiEngine = ({ app }) => {
     });
     const stop = () => send({ type: 'stop' });
 
+    const setDevice = (deviceId) => send({ type: 'setDevice', deviceId: deviceId || '' });
+
     const dispose = async () => {
         if (worker) {
             worker.postMessage({ type: 'close' });
@@ -135,6 +137,7 @@ const createWasapiEngine = ({ app }) => {
         resume,
         seek,
         stop,
+        setDevice,
         dispose,
         setEventForwarder: (fn) => {
             eventForwarder = fn;

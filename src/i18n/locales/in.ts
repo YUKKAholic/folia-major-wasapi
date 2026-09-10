@@ -1815,6 +1815,8 @@ export default {
     "wasapiExclusiveError": "Pemutaran eksklusif WASAPI gagal",
     "wasapiExclusiveFallback": "Trek/perangkat ini tidak mendukung WASAPI eksklusif; memutar melalui mode bersama",
     "wasapiNotBitPerfect": "Kedalaman bit sumber melebihi dukungan output eksklusif; memutar pada 16-bit",
+    "wasapiDevice": "Perangkat output eksklusif",
+    "wasapiDeviceDefault": "Perangkat default sistem",
     "audioOutputDevice": "Perangkat Output Saat Ini",
     "audioOutputDeviceDesc": "Ganti output audio yang digunakan oleh pemutar saat ini. Target utama adalah desktop Electron, dan lingkungan browser juga berfungsi bila setSinkId tersedia.",
     "audioOutputRefresh": "Segarkan",

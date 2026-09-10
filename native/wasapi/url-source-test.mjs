@@ -80,7 +80,8 @@ const outcome = await new Promise((resolveOutcome) => {
         if (m.type === 'error') resolveOutcome({ ok: false, reason: `error: ${m.message}` });
     });
     worker.postMessage({ type: 'init', nativePath, ffmpegPath });
-    worker.postMessage({ type: 'play', source: { url }, startSec: 0, deviceId: device.id });
+    worker.postMessage({ type: 'setDevice', deviceId: device.id });
+    worker.postMessage({ type: 'play', source: { url }, startSec: 0 });
 });
 
 await new Promise((r) => setTimeout(r, 400));

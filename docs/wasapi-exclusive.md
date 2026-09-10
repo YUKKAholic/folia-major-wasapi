@@ -6,10 +6,10 @@ Windows 专用的 WASAPI 独占模式输出。开启后，本地文件解码出�
 
 ## 一、如何开启
 
-设置 → **播放设备** → 打开「**WASAPI 独占输出（bit-perfect）**」开关。
+设置 → **播放设备** → 打开「**WASAPI 独占输出（bit-perfect）**」开关。开启后下方出现「**独占输出设备**」下拉，可选择具体声卡/耳机（默认跟随系统默认设备）。
 
-- 开关持久化在 `localStorage` 的 `folia_enable_wasapi_exclusive`（默认：Windows 上为开，其它平台不可用）。
-- 开启后播放**本地歌曲**时，HTML5 音频被静音，实际出声由 WASAPI 独占引擎负责；进度条、歌词、自动下一首等仍由原 `<audio>` 元素驱动。
+- 开关持久化在 `localStorage` 的 `folia_enable_wasapi_exclusive`（默认：Windows 上为开，其它平台不可用）；设备选择持久化在 `folia_wasapi_device_id`。
+- 开启后播放时，HTML5 音频被静音，实际出声由 WASAPI 独占引擎负责；进度条、歌词、自动下一首等仍由原 `<audio>` 元素驱动。
 - 关闭开关即恢复 Chromium 共享模式播放。
 
 ## 二、工作机制
@@ -107,7 +107,7 @@ node native/wasapi/decode-test24.mjs   # 校验 24-bit 解码输出
 
 | 现象 | 可能原因 | 处理 |
 | --- | --- | --- |
-| 提示「已回退到共享模式」 | 设备不支持源采样率 / 被占用 / 禁用了独占 | 在「声音设置 → 高级」允许应用独占控制；或接受共享模式 |
+| 提示「已回退到共享模式」 | 设备不支持源采样率 / 被占用 / 禁用了独占 | 在「独占输出设备」下拉里换一个支持独占的设备；或在「声音设置 → 高级」允许应用独占控制 |
 | 一直无声且未回退 | 渲染层被静音但引擎未出声 | 检查 `logs/` 与主进程控制台 `[WASAPI]`；关闭再打开开关重置 |
 | 24-bit 源提示按 16-bit 输出 | 使用的是上游 16-bit FFmpeg | 执行 `npm run build:ffmpeg:wasapi` 后重新打包 |
 | 原生模块加载失败 | `.node` 未构建或未 unpack | 执行 `npm run build:wasapi`；确认打包时 `asarUnpack` 生效 |

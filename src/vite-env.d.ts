@@ -839,6 +839,7 @@ declare global {
         resume: (source: WasapiSource, startSec?: number) => Promise<unknown>;
         seek: (source: WasapiSource, startSec?: number) => Promise<unknown>;
         stop: () => Promise<unknown>;
+        setDevice: (deviceId: string) => Promise<unknown>;
         setRendererMuted: (muted: boolean) => Promise<unknown>;
         onEvent: (callback: (event: WasapiEvent) => void) => () => void;
       };
