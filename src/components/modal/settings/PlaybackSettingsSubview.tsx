@@ -49,17 +49,21 @@ const PlaybackSettingsSubview: React.FC<PlaybackSettingsSubviewProps> = ({
     const {
         audioOutputDeviceId,
         enableTranscodeFallback,
+        enableWasapiExclusive,
         neteaseScrobbleEnabled,
         queueAddBehavior,
         onToggleTranscodeFallback,
+        onToggleWasapiExclusive,
         onToggleNeteaseScrobble,
         onQueueAddBehaviorChange,
     } = useAudioSettingsStore(useShallow(state => ({
         audioOutputDeviceId: state.audioOutputDeviceId,
         enableTranscodeFallback: state.enableTranscodeFallback,
+        enableWasapiExclusive: state.enableWasapiExclusive,
         neteaseScrobbleEnabled: state.neteaseScrobbleEnabled,
         queueAddBehavior: state.queueAddBehavior,
         onToggleTranscodeFallback: state.handleToggleTranscodeFallback,
+        onToggleWasapiExclusive: state.handleToggleWasapiExclusive,
         onToggleNeteaseScrobble: state.handleToggleNeteaseScrobble,
         onQueueAddBehaviorChange: state.handleSetQueueAddBehavior,
     })));
@@ -418,6 +422,19 @@ const PlaybackSettingsSubview: React.FC<PlaybackSettingsSubviewProps> = ({
                                 </div>
                             </div>
                             {renderToggle(enableTranscodeFallback, () => onToggleTranscodeFallback(!enableTranscodeFallback))}
+                        </div>
+                    )}
+                    {window.electron?.wasapi && (
+                        <div className="flex items-start justify-between gap-3 border-b border-current/10 pb-4">
+                            <div className="space-y-1">
+                                <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                                    {t('options.wasapiExclusive')}
+                                </div>
+                                <div className="text-[11px] opacity-50 max-w-[420px]" style={{ color: 'var(--text-secondary)' }}>
+                                    {t('options.wasapiExclusiveDesc')}
+                                </div>
+                            </div>
+                            {renderToggle(enableWasapiExclusive, () => onToggleWasapiExclusive(!enableWasapiExclusive))}
                         </div>
                     )}
                     <div className="flex items-start justify-between gap-3">

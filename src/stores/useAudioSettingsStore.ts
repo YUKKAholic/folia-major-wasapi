@@ -29,6 +29,9 @@ export const AUTO_PLAY_ON_LAUNCH_KEY = 'folia_auto_play_on_launch';
 
 export const ENABLE_TRANSCODE_FALLBACK_KEY = 'folia_enable_transcode_fallback';
 
+/** WASAPI exclusive-mode (bit-perfect) output. Windows-only; the engine is inert elsewhere. */
+export const ENABLE_WASAPI_EXCLUSIVE_KEY = 'folia_enable_wasapi_exclusive';
+
 /** Whether finished plays of online NetEase tracks are reported to the signed-in account. */
 export const NETEASE_SCROBBLE_KEY = 'folia_netease_scrobble';
 
@@ -137,6 +140,8 @@ export type AudioSettingsState = {
     autoPlayOnLaunch: boolean;
     /** Electron-only recovery for local and Navidrome formats Chromium cannot decode. */
     enableTranscodeFallback: boolean;
+    /** WASAPI exclusive-mode (bit-perfect) output. Bypasses EQ/effects/automix while active. */
+    enableWasapiExclusive: boolean;
     /** Report finished plays of online NetEase tracks to the signed-in account. Off by default. */
     neteaseScrobbleEnabled: boolean;
     audioOutputDeviceId: string;
@@ -151,6 +156,7 @@ export type AudioSettingsState = {
     handleSetQueueAddBehavior: (behavior: QueueAddBehavior) => void;
     handleToggleAutoPlayOnLaunch: (enable: boolean) => void;
     handleToggleTranscodeFallback: (enable: boolean) => void;
+    handleToggleWasapiExclusive: (enable: boolean) => void;
     handleToggleNeteaseScrobble: (enable: boolean) => void;
     handleSetAudioOutputDeviceId: (deviceId: string) => void;
     handleSetAudioEqualizerSettings: (settings: AudioEqualizerSettings) => void;
@@ -171,6 +177,10 @@ export const useAudioSettingsStore = create<AudioSettingsState>((set, get) => ({
     enableTranscodeFallback: getStoredBoolean(
         ENABLE_TRANSCODE_FALLBACK_KEY,
         typeof window !== 'undefined' && Boolean(window.electron?.requestTranscodeFallback),
+    ),
+    enableWasapiExclusive: getStoredBoolean(
+        ENABLE_WASAPI_EXCLUSIVE_KEY,
+        typeof window !== 'undefined' && window.electron?.platform === 'win32',
     ),
     // Off unless asked for: it writes to the listener's music account, so it is never a default.
     neteaseScrobbleEnabled: getStoredBoolean(NETEASE_SCROBBLE_KEY, false),
@@ -218,6 +228,10 @@ export const useAudioSettingsStore = create<AudioSettingsState>((set, get) => ({
     handleToggleTranscodeFallback: (enable) => {
         setStoredBoolean(ENABLE_TRANSCODE_FALLBACK_KEY, enable);
         set({ enableTranscodeFallback: enable });
+    },
+    handleToggleWasapiExclusive: (enable) => {
+        setStoredBoolean(ENABLE_WASAPI_EXCLUSIVE_KEY, enable);
+        set({ enableWasapiExclusive: enable });
     },
     handleToggleNeteaseScrobble: (enable) => {
         setStoredBoolean(NETEASE_SCROBBLE_KEY, enable);
@@ -298,6 +312,7 @@ export const selectAudioSettingsSnapshot = (state: AudioSettingsState) => ({
     queueAddBehavior: state.queueAddBehavior,
     autoPlayOnLaunch: state.autoPlayOnLaunch,
     enableTranscodeFallback: state.enableTranscodeFallback,
+    enableWasapiExclusive: state.enableWasapiExclusive,
     neteaseScrobbleEnabled: state.neteaseScrobbleEnabled,
     audioOutputDeviceId: state.audioOutputDeviceId,
     audioEqualizerSettings: state.audioEqualizerSettings,
@@ -311,6 +326,7 @@ export const selectAudioSettingsSnapshot = (state: AudioSettingsState) => ({
     handleSetQueueAddBehavior: state.handleSetQueueAddBehavior,
     handleToggleAutoPlayOnLaunch: state.handleToggleAutoPlayOnLaunch,
     handleToggleTranscodeFallback: state.handleToggleTranscodeFallback,
+    handleToggleWasapiExclusive: state.handleToggleWasapiExclusive,
     handleToggleNeteaseScrobble: state.handleToggleNeteaseScrobble,
     handleSetAudioOutputDeviceId: state.handleSetAudioOutputDeviceId,
     handleSetAudioEqualizerSettings: state.handleSetAudioEqualizerSettings,

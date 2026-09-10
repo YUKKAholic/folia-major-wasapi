@@ -599,6 +599,20 @@ declare global {
     memoryFile: string | null;
   }
 
+  interface WasapiDevice {
+    id: string;
+    name: string;
+  }
+
+  type WasapiEvent =
+    | { type: 'started'; positionMs: number; bitPerfect: boolean }
+    | { type: 'position'; positionMs: number }
+    | { type: 'ended'; positionMs: number }
+    | { type: 'paused'; positionMs: number }
+    | { type: 'stopped' }
+    | { type: 'fallback'; message: string }
+    | { type: 'error'; message: string };
+
   interface Window {
     electron?: {
       webUtils?: {
@@ -814,6 +828,16 @@ declare global {
         onModsStateChanged: (callback: (mods: ModRuntimeInfo[]) => void) => () => void;
         onExportProgress: (callback: (progress: ModExportProgress) => void) => () => void;
         onModLog: (callback: (entry: ModLogEntry) => void) => () => void;
+      };
+      wasapi?: {
+        listDevices: () => Promise<WasapiDevice[]>;
+        play: (filePath: string, startSec?: number) => Promise<unknown>;
+        pause: () => Promise<unknown>;
+        resume: (filePath: string, startSec?: number) => Promise<unknown>;
+        seek: (filePath: string, startSec?: number) => Promise<unknown>;
+        stop: () => Promise<unknown>;
+        setRendererMuted: (muted: boolean) => Promise<unknown>;
+        onEvent: (callback: (event: WasapiEvent) => void) => () => void;
       };
     };
   }

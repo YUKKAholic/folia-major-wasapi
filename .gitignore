@@ -80,6 +80,14 @@ mods/*.zip
 build/folia-wallpaper-helper.exe
 packaging/windows/wallpaper-helper/target/
 
+# Built by npm run build:wasapi (native/wasapi/build.mjs). The packaged copy lives under
+# electron/wasapi/ and is rebuilt there by the script; these are scratch artifacts.
+native/wasapi/target/
+native/wasapi/*.node
+
+# Scratch tree used by packaging/ffmpeg/build-ffmpeg-wasapi.sh.
+.ffmpeg-wasapi-build/
+
 # Python bytecode from the htdemucs runner, written beside it by the downloaded runtime.
 __pycache__/
 

@@ -1,0 +1,32 @@
+name: Build WASAPI FFmpeg (win-x64)
+
+# Builds the audio-focused FFmpeg that the WASAPI exclusive bit-perfect path needs (it adds the
+# pcm_s24le / pcm_s32le / pcm_f32le encoders the upstream ffmpeg-audio runtime lacks). Trigger it
+# manually, then either download the artifact or wire fetch-ffmpeg.mjs to a release built from it.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install mingw-w64 toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mingw-w64 nasm make
+
+      - name: Build FFmpeg (win-x64)
+        env:
+          FOLIA_FFMPEG_CROSS_PREFIX: x86_64-w64-mingw32-
+        run: bash packaging/ffmpeg/build-ffmpeg-wasapi.sh
+
+      - name: Verify 24-bit encoder is present
+        run: grep -a -q "pcm_s24le" build/ffmpeg/win-x64/ffmpeg.exe && echo "pcm_s24le present"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-win-x64-wasapi
+          path: build/ffmpeg/win-x64/

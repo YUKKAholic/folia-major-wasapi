@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import {
   chmod,
   copyFile,
@@ -97,6 +98,11 @@ export async function prepareBundledFfmpeg({
 
   const targetDir = path.join(outputRoot, asset.key);
   const targetBinary = path.join(targetDir, asset.binaryName);
+  // A locally built custom FFmpeg (with the WASAPI 24/32-bit PCM encoders) takes precedence over
+  // the pinned upstream asset, so `npm run build:ffmpeg:wasapi` output is what gets packaged.
+  if (existsSync(path.join(targetDir, "WASAPI-FFMPEG.txt"))) {
+    return targetDir;
+  }
   const markerPrefix = `Release: ${FFMPEG_RELEASE_TAG}\nArchive: ${asset.archive}\nArchive SHA-256: ${asset.sha256}\n`;
   try {
     const cachedMarker = await readFile(

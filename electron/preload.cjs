@@ -295,4 +295,18 @@ contextBridge.exposeInMainWorld('electron', {
             return () => ipcRenderer.removeListener('folia-mods:log', listener);
         },
     },
+    wasapi: {
+        listDevices: () => ipcRenderer.invoke('wasapi-list-devices'),
+        play: (filePath, startSec) => ipcRenderer.invoke('wasapi-play', filePath, startSec),
+        pause: () => ipcRenderer.invoke('wasapi-pause'),
+        resume: (filePath, startSec) => ipcRenderer.invoke('wasapi-resume', filePath, startSec),
+        seek: (filePath, startSec) => ipcRenderer.invoke('wasapi-seek', filePath, startSec),
+        stop: () => ipcRenderer.invoke('wasapi-stop'),
+        setRendererMuted: (muted) => ipcRenderer.invoke('wasapi-set-renderer-muted', muted),
+        onEvent: (callback) => {
+            const listener = (_event, event) => callback(event);
+            ipcRenderer.on('wasapi-event', listener);
+            return () => ipcRenderer.removeListener('wasapi-event', listener);
+        },
+    },
 });

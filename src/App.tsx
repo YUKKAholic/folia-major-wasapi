@@ -139,6 +139,7 @@ import { useElectronWindowChrome } from './hooks/useElectronWindowChrome';
 import { useTransportCommandRefs } from './hooks/useTransportCommandRefs';
 import { useHomeProviderRefresh } from './hooks/useHomeProviderRefresh';
 import { useAudioOutputDevice } from './hooks/useAudioOutputDevice';
+import { useWasapiExclusive } from './hooks/useWasapiExclusive';
 import { useThemeQuickEditorContext } from './hooks/useThemeQuickEditorContext';
 import { usePlayerBottomBarOffset } from './hooks/usePlayerBottomBarOffset';
 import { usePlayerBottomBarPositioningEntry } from './hooks/usePlayerBottomBarPositioningEntry';
@@ -354,6 +355,7 @@ export default function App() {
         lastAudioRecoverySourceRef,
         currentOnlineAudioUrlFetchedAtRef,
     } = usePlaybackRuntimeRefs();
+    useWasapiExclusive(audioRef);
     // The automix decks are set up much further down, but a few reset paths declared above here
     // need to be able to stop a transition, and queue navigation needs the track being SHOWN. A ref
     // keeps both reachable without reordering them; it is reassigned on every render, so the

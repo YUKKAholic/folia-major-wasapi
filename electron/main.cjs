@@ -35,6 +35,7 @@ const { createModelStore } = require('./analysis/modelStore.cjs');
 const { resolveLinuxPasswordStore } = require('./linuxPasswordStore.cjs');
 const { createTranscodeService } = require('./transcode/service.cjs');
 const { TRANSCODE_PROTOCOL_SCHEME } = require('./transcode/protocol.cjs');
+const { createWasapiEngine } = require('./wasapi/wasapiEngine.cjs');
 const { sanitizeDualTheme: sanitizeGeneratedDualTheme } = require('../shared/themeSanitizer.cjs');
 const {
   buildOpenAICompatibleRequestBody,
@@ -5192,6 +5193,8 @@ async function setMainWindowTransparentModeFromRemote(enabled) {
   return setMainWindowTransparentMode(enabled, handoff);
 }
 
+let wasapiEngine = null;
+
 app.whenReady().then(async () => {
   const startupResult = await mainProcessStartupPromise;
   if (startupResult === 'duplicate') {
@@ -5401,6 +5404,33 @@ app.whenReady().then(async () => {
     console.error('[Mods] Failed to initialize the mod system', error);
   }
 
+  // WASAPI exclusive-mode output (bit-perfect). Windows-only; the engine lazily spins up a
+  // worker thread that owns the native renderer and the FFmpeg decode feed.
+  if (process.platform === 'win32') {
+    try {
+      wasapiEngine = createWasapiEngine({ app });
+      wasapiEngine.setEventForwarder((event) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('wasapi-event', event);
+        }
+      });
+      ipcMain.handle('wasapi-list-devices', () => wasapiEngine.listDevices());
+      ipcMain.handle('wasapi-play', (_event, filePath, startSec) => wasapiEngine.play(filePath, startSec));
+      ipcMain.handle('wasapi-pause', () => wasapiEngine.pause());
+      ipcMain.handle('wasapi-resume', (_event, filePath, startSec) => wasapiEngine.resume(filePath, startSec));
+      ipcMain.handle('wasapi-seek', (_event, filePath, startSec) => wasapiEngine.seek(filePath, startSec));
+      ipcMain.handle('wasapi-stop', () => wasapiEngine.stop());
+      ipcMain.handle('wasapi-set-renderer-muted', (_event, muted) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.setAudioMuted(Boolean(muted));
+        }
+        return true;
+      });
+    } catch (error) {
+      console.warn('[WASAPI] Failed to initialize the WASAPI engine', error);
+    }
+  }
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
@@ -5443,6 +5473,10 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   transcodeService.dispose();
+  if (wasapiEngine) {
+    void wasapiEngine.dispose();
+    wasapiEngine = null;
+  }
   isAppQuitting = true;
   clearPendingWindowPlaybackHandoffRequests();
   if (modSystem) {
