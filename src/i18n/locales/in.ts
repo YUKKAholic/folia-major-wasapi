@@ -1817,6 +1817,8 @@ export default {
     "wasapiNotBitPerfect": "Kedalaman bit sumber melebihi dukungan output eksklusif; memutar pada 16-bit",
     "wasapiDevice": "Perangkat output eksklusif",
     "wasapiDeviceDefault": "Perangkat default sistem",
+    "wasapiExclusiveOnline": "Gunakan eksklusif untuk trek online (eksperimental)",
+    "wasapiExclusiveOnlineDesc": "Trek online harus diunduh penuh sebelum pemutaran eksklusif, bersaing dengan aliran Chromium dan bisa menyebabkan tersendat; nonaktif secara default. Hanya berfungsi bila perangkat mendukung sample rate trek secara native.",
     "wasapiModeExclusive": "Eksklusif",
     "wasapiModeShared": "Bersama",
     "wasapiModeOff": "Mati",

@@ -35,6 +35,12 @@ export const ENABLE_WASAPI_EXCLUSIVE_KEY = 'folia_enable_wasapi_exclusive';
 /** Explicit WASAPI exclusive output device. Empty string means the system default endpoint. */
 export const WASAPI_DEVICE_ID_KEY = 'folia_wasapi_device_id';
 
+/**
+ * Experimental: also route online / Navidrome tracks through exclusive mode. Off by default: the
+ * engine must download the whole track first, competing with Chromium's own stream of the same URL.
+ */
+export const WASAPI_EXCLUSIVE_ONLINE_KEY = 'folia_wasapi_exclusive_online';
+
 /** Whether finished plays of online NetEase tracks are reported to the signed-in account. */
 export const NETEASE_SCROBBLE_KEY = 'folia_netease_scrobble';
 
@@ -147,6 +153,8 @@ export type AudioSettingsState = {
     enableWasapiExclusive: boolean;
     /** Explicit WASAPI output endpoint id; empty string follows the system default device. */
     wasapiDeviceId: string;
+    /** Experimental: also use exclusive mode for online / Navidrome tracks. Off by default. */
+    enableWasapiExclusiveOnline: boolean;
     /** Report finished plays of online NetEase tracks to the signed-in account. Off by default. */
     neteaseScrobbleEnabled: boolean;
     audioOutputDeviceId: string;
@@ -163,6 +171,7 @@ export type AudioSettingsState = {
     handleToggleTranscodeFallback: (enable: boolean) => void;
     handleToggleWasapiExclusive: (enable: boolean) => void;
     handleSetWasapiDeviceId: (deviceId: string) => void;
+    handleToggleWasapiExclusiveOnline: (enable: boolean) => void;
     handleToggleNeteaseScrobble: (enable: boolean) => void;
     handleSetAudioOutputDeviceId: (deviceId: string) => void;
     handleSetAudioEqualizerSettings: (settings: AudioEqualizerSettings) => void;
@@ -189,6 +198,7 @@ export const useAudioSettingsStore = create<AudioSettingsState>((set, get) => ({
         typeof window !== 'undefined' && window.electron?.platform === 'win32',
     ),
     wasapiDeviceId: (typeof window !== 'undefined' ? localStorage.getItem(WASAPI_DEVICE_ID_KEY) : null) ?? '',
+    enableWasapiExclusiveOnline: getStoredBoolean(WASAPI_EXCLUSIVE_ONLINE_KEY, false),
     // Off unless asked for: it writes to the listener's music account, so it is never a default.
     neteaseScrobbleEnabled: getStoredBoolean(NETEASE_SCROBBLE_KEY, false),
     audioOutputDeviceId: readStoredAudioOutputDeviceId(),
@@ -250,6 +260,10 @@ export const useAudioSettingsStore = create<AudioSettingsState>((set, get) => ({
         } else {
             localStorage.removeItem(WASAPI_DEVICE_ID_KEY);
         }
+    },
+    handleToggleWasapiExclusiveOnline: (enable) => {
+        setStoredBoolean(WASAPI_EXCLUSIVE_ONLINE_KEY, enable);
+        set({ enableWasapiExclusiveOnline: enable });
     },
     handleToggleNeteaseScrobble: (enable) => {
         setStoredBoolean(NETEASE_SCROBBLE_KEY, enable);
@@ -332,6 +346,7 @@ export const selectAudioSettingsSnapshot = (state: AudioSettingsState) => ({
     enableTranscodeFallback: state.enableTranscodeFallback,
     enableWasapiExclusive: state.enableWasapiExclusive,
     wasapiDeviceId: state.wasapiDeviceId,
+    enableWasapiExclusiveOnline: state.enableWasapiExclusiveOnline,
     neteaseScrobbleEnabled: state.neteaseScrobbleEnabled,
     audioOutputDeviceId: state.audioOutputDeviceId,
     audioEqualizerSettings: state.audioEqualizerSettings,
@@ -347,6 +362,7 @@ export const selectAudioSettingsSnapshot = (state: AudioSettingsState) => ({
     handleToggleTranscodeFallback: state.handleToggleTranscodeFallback,
     handleToggleWasapiExclusive: state.handleToggleWasapiExclusive,
     handleSetWasapiDeviceId: state.handleSetWasapiDeviceId,
+    handleToggleWasapiExclusiveOnline: state.handleToggleWasapiExclusiveOnline,
     handleToggleNeteaseScrobble: state.handleToggleNeteaseScrobble,
     handleSetAudioOutputDeviceId: state.handleSetAudioOutputDeviceId,
     handleSetAudioEqualizerSettings: state.handleSetAudioEqualizerSettings,

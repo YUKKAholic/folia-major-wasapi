@@ -41,12 +41,13 @@ const resolveLocalFilePath = async (song: SongResult): Promise<string | null> =>
 const resolveWasapiSource = async (
     song: SongResult,
     audioSrc: string | null,
+    allowOnline: boolean,
 ): Promise<{ source: WasapiSource; key: string; isUrl: boolean } | null> => {
     if (isLocalPlaybackSong(song)) {
         const filePath = await resolveLocalFilePath(song);
         return filePath ? { source: { filePath }, key: `file:${filePath}`, isUrl: false } : null;
     }
-    if (typeof audioSrc === 'string' && /^https?:\/\//i.test(audioSrc)) {
+    if (allowOnline && typeof audioSrc === 'string' && /^https?:\/\//i.test(audioSrc)) {
         return { source: { url: audioSrc }, key: `url:${audioSrc}`, isUrl: true };
     }
     return null;
@@ -55,17 +56,20 @@ const resolveWasapiSource = async (
 export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>) => {
     const enableWasapiExclusive = useAudioSettingsStore(state => state.enableWasapiExclusive);
     const wasapiDeviceId = useAudioSettingsStore(state => state.wasapiDeviceId);
+    const enableWasapiExclusiveOnline = useAudioSettingsStore(state => state.enableWasapiExclusiveOnline);
     const currentSong = usePlaybackStore(state => state.currentSong);
     const currentSongId = currentSong?.id ?? null;
     const audioSrc = usePlaybackStore(state => state.audioSrc);
     const playerState = usePlaybackStore(selectDisplayPlayerState);
 
-    const activeSourceRef = useRef<{ source: WasapiSource; key: string; playing: boolean } | null>(null);
+    const activeSourceRef = useRef<{ source: WasapiSource; key: string; playing: boolean; isUrl: boolean } | null>(null);
     const failedSourcesRef = useRef<Set<string>>(new Set());
     const watchdogRef = useRef<number | null>(null);
     const needsAlignRef = useRef(false);
     const lastMessageRef = useRef<string | null>(null);
     const lastModeRef = useRef<WasapiMode>('off');
+    /** Once an online track fails exclusive, stop trying online for the rest of the session. */
+    const onlineSuspendedRef = useRef(false);
 
     // Publishes the current output mode (for the UI badge) and optionally toasts the change.
     const applyMode = (mode: WasapiMode, toast = false) => {
@@ -116,6 +120,7 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
         if (enableWasapiExclusive) {
             failedSourcesRef.current = new Set();
             activeSourceRef.current = null;
+            onlineSuspendedRef.current = false;
             applyMode('shared');
         } else {
             clearWatchdog();
@@ -136,8 +141,11 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
     useEffect(() => {
         const wasapi = window.electron?.wasapi;
         if (!wasapi || !enableWasapiExclusive) return;
+        // A new endpoint (or switching online support) gets a fresh chance at exclusive.
+        onlineSuspendedRef.current = false;
+        failedSourcesRef.current = new Set();
         void wasapi.setDevice(wasapiDeviceId);
-    }, [enableWasapiExclusive, wasapiDeviceId]);
+    }, [enableWasapiExclusive, wasapiDeviceId, enableWasapiExclusiveOnline]);
 
     // Play / pause / resume routing, issued only on an actual change.
     useEffect(() => {
@@ -152,7 +160,11 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
 
         let cancelled = false;
         void (async () => {
-            const resolved = await resolveWasapiSource(song, audioSrc);
+            const resolved = await resolveWasapiSource(
+                song,
+                audioSrc,
+                enableWasapiExclusiveOnline && !onlineSuspendedRef.current,
+            );
             if (cancelled) return;
             if (!resolved) {
                 dropToSharedMode();
@@ -179,7 +191,7 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
             }
             if (playerState === PlayerState.PLAYING) {
                 // New source: start it and let the HTML5 play until the engine reports `started`.
-                activeSourceRef.current = { source: resolved.source, key, playing: true };
+                activeSourceRef.current = { source: resolved.source, key, playing: true, isUrl: resolved.isUrl };
                 needsAlignRef.current = resolved.isUrl;
                 void wasapi.setDevice(wasapiDeviceId);
                 armWatchdog(resolved.isUrl ? WATCHDOG_URL_MS : WATCHDOG_MS);
@@ -190,7 +202,7 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
         return () => {
             cancelled = true;
         };
-    }, [enableWasapiExclusive, wasapiDeviceId, currentSongId, audioSrc, playerState, audioRef]);
+    }, [enableWasapiExclusive, wasapiDeviceId, enableWasapiExclusiveOnline, currentSongId, audioSrc, playerState, audioRef]);
 
     // Seek mirroring: the engine restarts at the element's position whenever a seek lands.
     useEffect(() => {
@@ -237,7 +249,12 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
             }
             if (event.type === 'fallback') {
                 const active = activeSourceRef.current;
-                if (active) failedSourcesRef.current.add(active.key);
+                if (active) {
+                    failedSourcesRef.current.add(active.key);
+                    // Online exclusive cannot work here: stop trying it for the rest of the session
+                    // so we never re-download and stall Chromium's stream again.
+                    if (active.isUrl) onlineSuspendedRef.current = true;
+                }
                 applyMode('shared', true);
                 void wasapi.setRendererMuted(false);
                 if (lastMessageRef.current !== event.message) {

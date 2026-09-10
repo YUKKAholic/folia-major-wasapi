@@ -1904,6 +1904,8 @@ export default {
     "wasapiNotBitPerfect": "The source bit depth exceeds exclusive output support; playing at 16-bit",
     "wasapiDevice": "Exclusive output device",
     "wasapiDeviceDefault": "System default device",
+    "wasapiExclusiveOnline": "Use exclusive for online tracks (experimental)",
+    "wasapiExclusiveOnlineDesc": "Online tracks must be downloaded in full before exclusive playback, competing with Chromium's own stream for bandwidth and possibly causing stutter; off by default. Only works when the device natively supports the track's sample rate.",
     "wasapiModeExclusive": "Exclusive",
     "wasapiModeShared": "Shared",
     "wasapiModeOff": "Off",

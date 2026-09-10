@@ -1905,6 +1905,8 @@ export default {
     "wasapiNotBitPerfect": "音源位深超出独占输出支持范围，已按 16-bit 输出",
     "wasapiDevice": "独占输出设备",
     "wasapiDeviceDefault": "系统默认设备",
+    "wasapiExclusiveOnline": "在线音源也使用独占（实验性）",
+    "wasapiExclusiveOnlineDesc": "在线歌曲需先整首下载才能独占，会与 Chromium 的在线播放流抢占带宽，可能导致卡顿；默认关闭。仅在设备原生支持其采样率时才有效。",
     "wasapiModeExclusive": "独占模式",
     "wasapiModeShared": "共享模式",
     "wasapiModeOff": "已关闭",
