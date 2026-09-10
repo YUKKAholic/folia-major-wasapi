@@ -44,6 +44,19 @@ export const FFMPEG_ASSETS = Object.freeze({
   },
 });
 
+// The fork publishes a custom audio-focused FFmpeg (24/32-bit PCM encoders) under this tag. When
+// it exists it is preferred for win-x64 so packaged releases support bit-perfect high-res output;
+// until then the pinned upstream runtime is used. The archive ships a `.sha256` sidecar, so no hash
+// has to be pinned here. See packaging/ffmpeg/build-ffmpeg-wasapi.sh and the build-ffmpeg-wasapi
+// workflow.
+export const WASAPI_FFMPEG_RELEASE_TAG = "ffmpeg-wasapi";
+const WASAPI_RELEASE_BASE_URL = `https://github.com/YUKKAholic/folia-major-wasapi/releases/download/${WASAPI_FFMPEG_RELEASE_TAG}`;
+export const WASAPI_FFMPEG_ASSETS = Object.freeze({
+  "win-x64": {
+    archive: "ffmpeg-8.1.2-folia-wasapi-win-x64.tar.gz",
+  },
+});
+
 const PLATFORM_NAMES = Object.freeze({
   darwin: "mac",
   linux: "linux",
@@ -85,6 +98,76 @@ const extractArchive = (archive, destination) => {
     throw new Error(`tar failed with exit code ${result.status}`);
 };
 
+/**
+ * Fetches the fork's custom WASAPI FFmpeg for an arch when its release asset exists. The archive
+ * ships a `.sha256` sidecar, so verification needs no pinned hash. Returns the staged directory,
+ * or null when the custom asset is not published (caller falls back to upstream).
+ */
+const prepareWasapiFfmpeg = async (asset, targetDir) => {
+  const custom = WASAPI_FFMPEG_ASSETS[asset.key];
+  if (!custom) return null;
+
+  const targetBinary = path.join(targetDir, asset.binaryName);
+  const markerPath = path.join(targetDir, "WASAPI-FFMPEG.txt");
+  try {
+    const marker = await readFile(markerPath, "utf8");
+    const cachedBinarySha256 = /^Binary SHA-256: ([a-f0-9]{64})$/m.exec(marker)?.[1];
+    if (cachedBinarySha256 && (await sha256File(targetBinary)) === cachedBinarySha256) {
+      return targetDir;
+    }
+  } catch {
+    // Not cached yet.
+  }
+
+  const sidecarResponse = await fetch(
+    `${WASAPI_RELEASE_BASE_URL}/${custom.archive}.sha256`,
+    { redirect: "follow" },
+  );
+  if (!sidecarResponse.ok) return null; // not published yet
+  const expectedSha256 = (await sidecarResponse.text())
+    .trim()
+    .split(/\s+/)[0]
+    .toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(expectedSha256)) {
+    throw new Error(`Invalid checksum sidecar for ${custom.archive}`);
+  }
+
+  await mkdir(path.dirname(targetDir), { recursive: true });
+  const temporaryRoot = await mkdtemp(
+    path.join(os.tmpdir(), "folia-ffmpeg-wasapi-"),
+  );
+  let stagingDir;
+  try {
+    const archivePath = path.join(temporaryRoot, custom.archive);
+    await download(`${WASAPI_RELEASE_BASE_URL}/${custom.archive}`, archivePath);
+    const actualSha256 = await sha256File(archivePath);
+    if (actualSha256 !== expectedSha256) {
+      throw new Error(
+        `Checksum mismatch for ${custom.archive}: expected ${expectedSha256}, got ${actualSha256}`,
+      );
+    }
+    extractArchive(archivePath, temporaryRoot);
+    // The custom archive carries ffmpeg.exe at its root (unlike the upstream layout).
+    const sourceBinary = path.join(temporaryRoot, asset.binaryName);
+    const binarySha256 = await sha256File(sourceBinary);
+    stagingDir = await mkdtemp(
+      path.join(path.dirname(targetDir), `.${asset.key}-${process.pid}-`),
+    );
+    await copyFile(sourceBinary, path.join(stagingDir, asset.binaryName));
+    await rm(targetDir, { recursive: true, force: true });
+    await cp(stagingDir, targetDir, { recursive: true });
+    // Written last so a failed copy can never be accepted as a valid cache hit.
+    await writeFile(
+      markerPath,
+      `Release: ${WASAPI_FFMPEG_RELEASE_TAG}\nArchive: ${custom.archive}\nArchive SHA-256: ${expectedSha256}\nBinary SHA-256: ${binarySha256}\n`,
+    );
+    return targetDir;
+  } finally {
+    if (stagingDir) await rm(stagingDir, { recursive: true, force: true });
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+};
+
 /** Prepares the exact architecture directory consumed by the extraResources FileSet. */
 export async function prepareBundledFfmpeg({
   platform = process.platform,
@@ -102,6 +185,15 @@ export async function prepareBundledFfmpeg({
   // the pinned upstream asset, so `npm run build:ffmpeg:wasapi` output is what gets packaged.
   if (existsSync(path.join(targetDir, "WASAPI-FFMPEG.txt"))) {
     return targetDir;
+  }
+  // Prefer the fork's published custom runtime (24/32-bit PCM) over the pinned upstream asset.
+  try {
+    const wasapiDir = await prepareWasapiFfmpeg(asset, targetDir);
+    if (wasapiDir) return wasapiDir;
+  } catch (error) {
+    console.warn(
+      `[ffmpeg] custom WASAPI runtime unavailable, using the pinned upstream build: ${error.message}`,
+    );
   }
   const markerPrefix = `Release: ${FFMPEG_RELEASE_TAG}\nArchive: ${asset.archive}\nArchive SHA-256: ${asset.sha256}\n`;
   try {

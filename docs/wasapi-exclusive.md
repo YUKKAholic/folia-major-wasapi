@@ -19,15 +19,23 @@ Windows 专用的 WASAPI 独占模式输出。开启后，本地文件解码出�
 | 层 | 文件 | 职责 |
 | --- | --- | --- |
 | 原生 | `native/wasapi/`（Rust + napi-rs） | `IAudioClient` 独占打开、事件驱动 ping-pong 填 PCM、`IAudioClock` 报位、设备枚举 |
-| 主进程 | `electron/wasapi/wasapiEngine.cjs` / `wasapiWorker.cjs` | worker 线程持有原生渲染器与 FFmpeg 子进程；探测格式、解码到 PCM、喂缓冲；对渲染层暴露 IPC |
-| 渲染层 | `src/hooks/useWasapiExclusive.ts` | 监听播放状态/当前歌曲，解析本地文件路径，驱动引擎，静音/解除静音，回退 |
+| 主进程 | `electron/wasapi/wasapiEngine.cjs` / `wasapiWorker.cjs` | worker 线程持有原生渲染器与 FFmpeg 子进程；解析本地路径或下载远程 URL、探测格式、解码到 PCM、喂缓冲；对渲染层暴露 IPC |
+| 渲染层 | `src/hooks/useWasapiExclusive.ts` | 监听播放状态/当前歌曲/音源，解析源（本地路径或远程 URL），驱动引擎，静音/解除静音，回退 |
+
+音源有两种，worker 统一处理：
+
+- **本地文件**：渲染层从本地曲库解析出文件路径，交给引擎。
+- **在线 / Navidrome**：渲染层把远程 http(s) 音频地址交给引擎；worker 用 Node `fetch` 把流**下载到临时文件**（打包的 FFmpeg 是 `--disable-network`，读不了 URL），再交给 FFmpeg 解码；换曲/停止时删除临时文件。
+
 
 数据流：
 
 ```
-本地文件 ──ffmpeg(解码到 PCM, WAV on stdout)──> worker 环形缓冲 ──> 原生 WASAPI 独占渲染器 ──> 音频设备
-   ▲                                                                         
-   └── 渲染层把文件路径 + 播放/暂停/seek 经 IPC 交给 worker（不传音频数据）
+本地文件 ────────────────────────────────┐
+                                          ▼
+在线/Navidrome ──(worker: Node fetch 下载)──> 临时文件 ──ffmpeg(解码到 PCM, WAV on stdout)──> worker 环形缓冲 ──> 原生 WASAPI 独占渲染器 ──> 音频设备
+   ▲
+   └── 渲染层把「文件路径或远程 URL」+ 播放/暂停/seek 经 IPC 交给 worker（不传音频数据）
 ```
 
 关键点：
@@ -39,7 +47,7 @@ Windows 专用的 WASAPI 独占模式输出。开启后，本地文件解码出�
 
 ## 三、支持范围与限制
 
-- **仅本地文件**：在线（网易/QQ/酷狗）与 Navidrome 走原管线，不进入独占路径。
+- **音源**：本地文件、以及在线（网易/QQ/酷狗）与 Navidrome 的**远程 http(s) 音频源**均支持。若在线曲命中本地缓存、只有 `blob:` 地址（渲染层专属，主进程拿不到）而没有可用远程 URL，则该曲回退共享模式。
 - **位深**：16/24/32-bit 由定制 FFmpeg 支持；源位深超过独占输出位深时按较低位深输出（事件标记 `bitPerfect:false`）。
 - **绕过 DSP**：独占时均衡器、音效、软件音量、automix/交叉淡化均不生效——这是 bit-perfect 的定义。
 - **采样率匹配**：设备独占只认自己的原生时钟。例如设备只支持 48kHz 时，44.1kHz 源会被拒绝并回退共享模式。
@@ -68,6 +76,10 @@ npm run build:ffmpeg:wasapi   # 见 packaging/ffmpeg/build-ffmpeg-wasapi.sh
 - Windows：脚本在 MSYS2 MINGW64 下原生编译（需 `mingw-w64-x86_64-gcc`、`nasm`、`make`）。
 - Linux/CI：用 `FOLIA_FFMPEG_CROSS_PREFIX=x86_64-w64-mingw32-` 交叉编译；仓库内已有 `build-ffmpeg-wasapi.yml` workflow。
 - 产物落在 `build/ffmpeg/win-x64/`（该目录按上游设计被 gitignore），并写入 `WASAPI-FFMPEG.txt` 标记；`fetch-ffmpeg.mjs` 检测到该标记时优先使用本地定制版本，而不是拉取上游 16-bit 版。
+
+**CI 发版（让 GitHub Actions 打出的包也带 24-bit）**：`build-ffmpeg-wasapi.yml` 除了构建，还会把产物打成 `ffmpeg-8.1.2-folia-wasapi-win-x64.tar.gz` + `.sha256` 并发布到 `ffmpeg-wasapi` tag。`fetch-ffmpeg.mjs` 对 win-x64 会优先从该 release 拉取定制版（用 `.sha256` 校验），拿不到才回退上游 16-bit 版。因此：
+1. 首次使用：手动触发一次 `Build WASAPI FFmpeg (win-x64)` workflow，生成 release 资源。
+2. 之后每次 `electron-release.yml` 打包时，`beforePack` 会自动拉到 24-bit 版。
 
 ### 3. 完整打包
 

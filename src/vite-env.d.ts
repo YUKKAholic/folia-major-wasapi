@@ -604,6 +604,9 @@ declare global {
     name: string;
   }
 
+  /** A playable source for the WASAPI engine: a local file or a remote URL (downloaded first). */
+  type WasapiSource = { filePath: string } | { url: string };
+
   type WasapiEvent =
     | { type: 'started'; positionMs: number; bitPerfect: boolean }
     | { type: 'position'; positionMs: number }
@@ -831,10 +834,10 @@ declare global {
       };
       wasapi?: {
         listDevices: () => Promise<WasapiDevice[]>;
-        play: (filePath: string, startSec?: number) => Promise<unknown>;
+        play: (source: WasapiSource, startSec?: number) => Promise<unknown>;
         pause: () => Promise<unknown>;
-        resume: (filePath: string, startSec?: number) => Promise<unknown>;
-        seek: (filePath: string, startSec?: number) => Promise<unknown>;
+        resume: (source: WasapiSource, startSec?: number) => Promise<unknown>;
+        seek: (source: WasapiSource, startSec?: number) => Promise<unknown>;
         stop: () => Promise<unknown>;
         setRendererMuted: (muted: boolean) => Promise<unknown>;
         onEvent: (callback: (event: WasapiEvent) => void) => () => void;

@@ -5415,10 +5415,10 @@ app.whenReady().then(async () => {
         }
       });
       ipcMain.handle('wasapi-list-devices', () => wasapiEngine.listDevices());
-      ipcMain.handle('wasapi-play', (_event, filePath, startSec) => wasapiEngine.play(filePath, startSec));
+      ipcMain.handle('wasapi-play', (_event, source, startSec) => wasapiEngine.play(source, startSec));
       ipcMain.handle('wasapi-pause', () => wasapiEngine.pause());
-      ipcMain.handle('wasapi-resume', (_event, filePath, startSec) => wasapiEngine.resume(filePath, startSec));
-      ipcMain.handle('wasapi-seek', (_event, filePath, startSec) => wasapiEngine.seek(filePath, startSec));
+      ipcMain.handle('wasapi-resume', (_event, source, startSec) => wasapiEngine.resume(source, startSec));
+      ipcMain.handle('wasapi-seek', (_event, source, startSec) => wasapiEngine.seek(source, startSec));
       ipcMain.handle('wasapi-stop', () => wasapiEngine.stop());
       ipcMain.handle('wasapi-set-renderer-muted', (_event, muted) => {
         if (mainWindow && !mainWindow.isDestroyed()) {

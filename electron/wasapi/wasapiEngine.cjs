@@ -98,21 +98,21 @@ const createWasapiEngine = ({ app }) => {
         worker.postMessage(msg);
     };
 
-    const play = (filePath, startSec) => send({
+    const play = (source, startSec) => send({
         type: 'play',
-        filePath,
+        source,
         startSec: startSec || 0,
     });
 
     const pause = () => send({ type: 'pause' });
-    const resume = (filePath, startSec) => send({
+    const resume = (source, startSec) => send({
         type: 'resume',
-        filePath,
+        source,
         startSec: startSec || 0,
     });
-    const seek = (filePath, startSec) => send({
+    const seek = (source, startSec) => send({
         type: 'seek',
-        filePath,
+        source,
         startSec: startSec || 0,
     });
     const stop = () => send({ type: 'stop' });

@@ -3,15 +3,15 @@
 // Runs in a Node worker thread so blocking PCM writes and the FFmpeg decode feed never
 // stall the Electron main process. Owns the native WASAPI renderer and the FFmpeg child.
 // The worker probes the source format itself with music-metadata, so the renderer only has
-// to hand it a local file path.
+// to hand it a local file path or a remote audio URL.
 //
 // Message protocol (main -> worker):
 //   { type: 'init', nativePath, ffmpegPath }
 //   { type: 'listDevices' }
-//   { type: 'play',   filePath, startSec }
+//   { type: 'play',   source: { filePath } | { url }, startSec }
 //   { type: 'pause' }
-//   { type: 'resume', filePath, startSec }
-//   { type: 'seek',   filePath, startSec }
+//   { type: 'resume', source, startSec }
+//   { type: 'seek',   source, startSec }
 //   { type: 'stop' }
 //   { type: 'close' }
 //
@@ -20,12 +20,18 @@
 //   { type: 'started', positionMs, bitPerfect }
 //   { type: 'position', positionMs }
 //   { type: 'ended', positionMs }
+//   { type: 'fallback', message }
 //   { type: 'error', message }
 
 'use strict';
 
 const { parentPort } = require('worker_threads');
 const { spawn } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { Readable } = require('stream');
+const { pipeline } = require('stream/promises');
 
 let native = null;
 let renderer = null;
@@ -34,6 +40,8 @@ let ffmpegPath = '';
 let positionBaseMs = 0;
 let playing = false;
 let positionTimer = null;
+/** Temp file backing a downloaded URL source, removed when playback moves on. */
+let tempSourcePath = null;
 
 const post = (msg) => {
     try {
@@ -55,6 +63,17 @@ const killFfmpeg = () => {
             // Already gone.
         }
         ffmpeg = null;
+    }
+};
+
+const cleanupTemp = () => {
+    if (tempSourcePath) {
+        try {
+            fs.rmSync(tempSourcePath, { force: true });
+        } catch {
+            // Best effort.
+        }
+        tempSourcePath = null;
     }
 };
 
@@ -93,6 +112,38 @@ const currentPositionMs = () => {
     } catch {
         return positionBaseMs;
     }
+};
+
+// Streams a remote audio URL to a temp file so the (network-disabled) FFmpeg build can read it.
+const downloadToTemp = async (url) => {
+    const response = await fetch(url, { redirect: 'follow' });
+    if (!response.ok || !response.body) {
+        throw new Error(`HTTP ${response.status}`);
+    }
+    let ext = '.audio';
+    try {
+        ext = path.extname(new URL(url).pathname) || ext;
+    } catch {
+        // Keep the fallback extension.
+    }
+    const tmp = path.join(
+        os.tmpdir(),
+        `folia-wasapi-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`,
+    );
+    await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(tmp));
+    return tmp;
+};
+
+// Resolves a source descriptor to a local file FFmpeg can read, downloading a URL first.
+const resolveSource = async (source) => {
+    if (source && typeof source.filePath === 'string' && source.filePath) {
+        return { path: source.filePath, temp: false };
+    }
+    if (source && typeof source.url === 'string' && source.url) {
+        const tmp = await downloadToTemp(source.url);
+        return { path: tmp, temp: true };
+    }
+    throw new Error('unsupported audio source');
 };
 
 // Probes a local audio file for its native format via music-metadata.
@@ -202,10 +253,17 @@ const startDecode = ({ filePath, sampleRate, channels, startSec, codec }) => {
     });
 };
 
-const startPlayback = async ({ filePath, startSec }) => {
+const startPlayback = async ({ source, startSec, deviceId }) => {
     killFfmpeg();
     clearPositionTimer();
     closeRenderer();
+    cleanupTemp();
+
+    const resolved = await resolveSource(source);
+    if (resolved.temp) {
+        tempSourcePath = resolved.path;
+    }
+    const filePath = resolved.path;
 
     const format = await probeFormat(filePath);
     // Output the source's native bit depth so exclusive playback stays bit-perfect. Requires an
@@ -214,7 +272,7 @@ const startPlayback = async ({ filePath, startSec }) => {
     const bitPerfect = openBits >= format.bitsPerSample;
 
     renderer = new native.FoliaWasapi();
-    renderer.openExclusive('', {
+    renderer.openExclusive(deviceId || '', {
         sampleRate: format.sampleRate,
         channels: format.channels,
         bitsPerSample: openBits,
@@ -257,7 +315,8 @@ parentPort.on('message', (msg) => {
         case 'seek':
             startPlayback(msg).catch((err) => {
                 playing = false;
-                // Device/format/probe failure: fall back to shared mode rather than going silent.
+                cleanupTemp();
+                // Device/format/probe/download failure: fall back to shared mode rather than going silent.
                 post({ type: 'fallback', message: String(err && err.message || err) });
             });
             break;
@@ -273,6 +332,7 @@ parentPort.on('message', (msg) => {
             killFfmpeg();
             stopRenderer();
             clearPositionTimer();
+            cleanupTemp();
             post({ type: 'stopped' });
             break;
         case 'close':
@@ -280,6 +340,7 @@ parentPort.on('message', (msg) => {
             killFfmpeg();
             clearPositionTimer();
             closeRenderer();
+            cleanupTemp();
             post({ type: 'closed' });
             break;
         default:

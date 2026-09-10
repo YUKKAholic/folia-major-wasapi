@@ -297,10 +297,10 @@ contextBridge.exposeInMainWorld('electron', {
     },
     wasapi: {
         listDevices: () => ipcRenderer.invoke('wasapi-list-devices'),
-        play: (filePath, startSec) => ipcRenderer.invoke('wasapi-play', filePath, startSec),
+        play: (source, startSec) => ipcRenderer.invoke('wasapi-play', source, startSec),
         pause: () => ipcRenderer.invoke('wasapi-pause'),
-        resume: (filePath, startSec) => ipcRenderer.invoke('wasapi-resume', filePath, startSec),
-        seek: (filePath, startSec) => ipcRenderer.invoke('wasapi-seek', filePath, startSec),
+        resume: (source, startSec) => ipcRenderer.invoke('wasapi-resume', source, startSec),
+        seek: (source, startSec) => ipcRenderer.invoke('wasapi-seek', source, startSec),
         stop: () => ipcRenderer.invoke('wasapi-stop'),
         setRendererMuted: (muted) => ipcRenderer.invoke('wasapi-set-renderer-muted', muted),
         onEvent: (callback) => {

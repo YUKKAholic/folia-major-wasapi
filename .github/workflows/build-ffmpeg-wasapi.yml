@@ -1,15 +1,25 @@
 name: Build WASAPI FFmpeg (win-x64)
 
 # Builds the audio-focused FFmpeg that the WASAPI exclusive bit-perfect path needs (it adds the
-# pcm_s24le / pcm_s32le / pcm_f32le encoders the upstream ffmpeg-audio runtime lacks). Trigger it
-# manually, then either download the artifact or wire fetch-ffmpeg.mjs to a release built from it.
+# pcm_s24le / pcm_s32le / pcm_f32le encoders the upstream ffmpeg-audio runtime lacks) and
+# publishes it as a release asset under the `ffmpeg-wasapi` tag. `fetch-ffmpeg.mjs` pulls that
+# asset for win-x64, so packaged releases ship the 24-bit-capable binary.
+#
+# Run this once (and again whenever the FFmpeg version changes), then releases pick it up
+# automatically. It falls back to the upstream pinned runtime until the asset exists.
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-24.04
+    env:
+      RELEASE_TAG: ffmpeg-wasapi
+      ASSET_NAME: ffmpeg-8.1.2-folia-wasapi-win-x64.tar.gz
     steps:
       - uses: actions/checkout@v4
 
@@ -25,6 +35,22 @@ jobs:
 
       - name: Verify 24-bit encoder is present
         run: grep -a -q "pcm_s24le" build/ffmpeg/win-x64/ffmpeg.exe && echo "pcm_s24le present"
+
+      - name: Package asset with checksum sidecar
+        run: |
+          cd build/ffmpeg/win-x64
+          tar -czf "${GITHUB_WORKSPACE}/${ASSET_NAME}" ffmpeg.exe
+          sha256sum "${GITHUB_WORKSPACE}/${ASSET_NAME}" | awk '{print $1}' > "${GITHUB_WORKSPACE}/${ASSET_NAME}.sha256"
+          cat "${GITHUB_WORKSPACE}/${ASSET_NAME}.sha256"
+
+      - name: Publish release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "${RELEASE_TAG}" >/dev/null 2>&1 \
+            || gh release create "${RELEASE_TAG}" --title "WASAPI FFmpeg" \
+                 --notes "Custom audio-focused FFmpeg with 24/32-bit PCM encoders, built by packaging/ffmpeg/build-ffmpeg-wasapi.sh."
+          gh release upload "${RELEASE_TAG}" "${ASSET_NAME}" "${ASSET_NAME}.sha256" --clobber
 
       - uses: actions/upload-artifact@v4
         with:

@@ -10,14 +10,15 @@ import i18n from '../i18n/config';
 
 // src/hooks/useWasapiExclusive.ts
 //
-// Routes local-file playback through the WASAPI exclusive-mode (bit-perfect) engine when the
-// setting is on. The HTML5 element keeps running as the transport/metronome (progress, lyrics,
-// ended→next), but the renderer's audio is muted via `webContents.setAudioMuted` so the WASAPI
-// output is the only thing the listener hears. Seek / pause / resume are mirrored to the engine.
+// Routes playback through the WASAPI exclusive-mode (bit-perfect) engine when the setting is on.
+// Local files are handed over by path; online / Navidrome tracks by their remote URL (the worker
+// downloads it to a temp file first). The HTML5 element keeps running as the transport/metronome
+// (progress, lyrics, ended→next), but the renderer's audio is muted via `webContents.setAudioMuted`
+// so the WASAPI output is the only thing heard. Seek / pause / resume are mirrored to the engine.
 //
 // When the device cannot honour the source format (sample rate, bit depth, or an occupied
-// endpoint) the engine reports `fallback` and the renderer is unmuted again, so playback
-// continues through Chromium's shared-mode output instead of going silent.
+// endpoint) the engine reports `fallback` and the renderer is unmuted again, so playback continues
+// through Chromium's shared-mode output instead of going silent.
 
 const resolveLocalFilePath = async (song: SongResult): Promise<string | null> => {
     const songId = (song as SongResult & { localRef?: { songId?: string } }).localRef?.songId;
@@ -27,13 +28,29 @@ const resolveLocalFilePath = async (song: SongResult): Promise<string | null> =>
     return record?.filePath ?? null;
 };
 
+/** Resolves the engine source and a stable key for the current song, or null when unsupported. */
+const resolveWasapiSource = async (
+    song: SongResult,
+    audioSrc: string | null,
+): Promise<{ source: WasapiSource; key: string } | null> => {
+    if (isLocalPlaybackSong(song)) {
+        const filePath = await resolveLocalFilePath(song);
+        return filePath ? { source: { filePath }, key: `file:${filePath}` } : null;
+    }
+    if (typeof audioSrc === 'string' && /^https?:\/\//i.test(audioSrc)) {
+        return { source: { url: audioSrc }, key: `url:${audioSrc}` };
+    }
+    return null;
+};
+
 export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>) => {
     const enableWasapiExclusive = useAudioSettingsStore(state => state.enableWasapiExclusive);
     const currentSong = usePlaybackStore(state => state.currentSong);
+    const audioSrc = usePlaybackStore(state => state.audioSrc);
     const playerState = usePlaybackStore(selectDisplayPlayerState);
 
-    const activePathRef = useRef<string | null>(null);
-    const failedPathsRef = useRef<Set<string>>(new Set());
+    const activeSourceRef = useRef<{ source: WasapiSource; key: string } | null>(null);
+    const failedSourcesRef = useRef<Set<string>>(new Set());
     const lastMessageRef = useRef<string | null>(null);
 
     // While the setting is on, the renderer must stay muted: WASAPI owns the audible output.
@@ -41,12 +58,12 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
         const wasapi = window.electron?.wasapi;
         if (!wasapi) return;
         if (enableWasapiExclusive) {
-            failedPathsRef.current = new Set();
+            failedSourcesRef.current = new Set();
             void wasapi.setRendererMuted(true);
         } else {
             void wasapi.stop();
             void wasapi.setRendererMuted(false);
-            activePathRef.current = null;
+            activeSourceRef.current = null;
         }
         return () => {
             void wasapi.stop();
@@ -54,32 +71,37 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
         };
     }, [enableWasapiExclusive]);
 
-    // Play / pause / resume routing for the current local song.
+    // Play / pause / resume routing for the current song.
     useEffect(() => {
         const wasapi = window.electron?.wasapi;
         if (!wasapi || !enableWasapiExclusive) return;
 
         const song = currentSong;
-        if (!song || !isLocalPlaybackSong(song)) {
-            activePathRef.current = null;
+        if (!song) {
+            activeSourceRef.current = null;
             void wasapi.stop();
             return;
         }
 
         let cancelled = false;
         void (async () => {
-            const filePath = await resolveLocalFilePath(song);
-            if (cancelled || !filePath) return;
-            // Already fell back for this file: stay on shared mode, do not retry.
-            if (failedPathsRef.current.has(filePath)) return;
+            const resolved = await resolveWasapiSource(song, audioSrc);
+            if (cancelled) return;
+            if (!resolved) {
+                activeSourceRef.current = null;
+                void wasapi.stop();
+                return;
+            }
+            // Already fell back for this source: stay on shared mode, do not retry.
+            if (failedSourcesRef.current.has(resolved.key)) return;
 
             if (playerState === PlayerState.PLAYING) {
-                if (activePathRef.current !== filePath) {
-                    activePathRef.current = filePath;
+                if (activeSourceRef.current?.key !== resolved.key) {
+                    activeSourceRef.current = resolved;
                     void wasapi.setRendererMuted(true);
-                    void wasapi.play(filePath, 0);
+                    void wasapi.play(resolved.source, 0);
                 } else {
-                    void wasapi.resume(filePath, audioRef.current?.currentTime ?? 0);
+                    void wasapi.resume(resolved.source, audioRef.current?.currentTime ?? 0);
                 }
             } else if (playerState === PlayerState.PAUSED) {
                 void wasapi.pause();
@@ -89,7 +111,7 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
         return () => {
             cancelled = true;
         };
-    }, [enableWasapiExclusive, currentSong, playerState, audioRef]);
+    }, [enableWasapiExclusive, currentSong, audioSrc, playerState, audioRef]);
 
     // Seek mirroring: the engine restarts at the element's position whenever a seek lands.
     useEffect(() => {
@@ -98,11 +120,9 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
         if (!wasapi || !enableWasapiExclusive || !element) return;
 
         const onSeeked = () => {
-            const song = usePlaybackStore.getState().currentSong;
-            if (!song || !isLocalPlaybackSong(song)) return;
-            const path = activePathRef.current;
-            if (!path || failedPathsRef.current.has(path)) return;
-            void wasapi.seek(path, element.currentTime);
+            const active = activeSourceRef.current;
+            if (!active || failedSourcesRef.current.has(active.key)) return;
+            void wasapi.seek(active.source, element.currentTime);
         };
         element.addEventListener('seeked', onSeeked);
         return () => element.removeEventListener('seeked', onSeeked);
@@ -122,8 +142,8 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
                 return;
             }
             if (event.type === 'fallback') {
-                const path = activePathRef.current;
-                if (path) failedPathsRef.current.add(path);
+                const active = activeSourceRef.current;
+                if (active) failedSourcesRef.current.add(active.key);
                 void wasapi.setRendererMuted(false);
                 if (lastMessageRef.current !== event.message) {
                     lastMessageRef.current = event.message;
