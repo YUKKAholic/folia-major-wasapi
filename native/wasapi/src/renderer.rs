@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
@@ -33,7 +33,6 @@ use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
 const BUFFER_DURATION_HNS: i64 = 500_000; // 50 ms exclusive buffer
 const PERIOD_HNS: i64 = 500_000; // 50 ms event period (must equal buffer in exclusive mode)
 const EVENT_WAIT_TIMEOUT_MS: u32 = 100; // poll for commands while idle
-const WRITE_BLOCK_TIMEOUT_MS: u64 = 500; // max block per write_pcm call
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum RendererState {
@@ -223,32 +222,16 @@ impl WasapiRenderer {
             .map_err(|_| "WASAPI renderer thread has stopped".to_string())
     }
 
-    /// Pushes PCM bytes into the ring buffer, blocking (with a timeout) when full.
-    /// Returns the number of bytes actually accepted.
+    /// Pushes PCM bytes into the ring buffer. Never blocks: accepts what fits and returns the
+    /// number of bytes taken, so the JS caller can retry later without stalling its event loop.
     pub fn write_pcm(&self, data: &[u8]) -> usize {
-        let mut accepted = 0usize;
-        let deadline = Instant::now() + Duration::from_millis(WRITE_BLOCK_TIMEOUT_MS);
         let mut guard = self.shared.ring.lock().unwrap();
-        while accepted < data.len() {
-            let avail = guard.available();
-            if avail > 0 {
-                let take = avail.min(data.len() - accepted);
-                guard.buf.extend(&data[accepted..accepted + take]);
-                accepted += take;
-                continue;
-            }
-            if Instant::now() >= deadline {
-                break;
-            }
-            let (next, _timeout) = self
-                .shared
-                .ring_cond
-                .wait_timeout(guard, Duration::from_millis(50))
-                .unwrap();
-            guard = next;
+        let available = guard.available();
+        let take = available.min(data.len());
+        if take > 0 {
+            guard.buf.extend(&data[..take]);
         }
-        self.shared.ring_cond.notify_all();
-        accepted
+        take
     }
 
     pub fn get_position_ms(&self) -> f64 {

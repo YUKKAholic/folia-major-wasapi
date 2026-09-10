@@ -1,5 +1,7 @@
 import React, { useCallback, useLayoutEffect, useRef } from 'react';
 import { MotionValue, useMotionValueEvent } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
+import { useWasapiStatusStore } from '../stores/useWasapiStatusStore';
 
 interface ProgressBarProps {
     currentTime: MotionValue<number>;
@@ -40,6 +42,9 @@ const ProgressBar: React.FC<ProgressBarProps> = ({
     const isDraggingRef = useRef(false);
     const lastDisplayedSecondRef = useRef<number | null>(null);
     const lastInputSecondRef = useRef<number | null>(null);
+    const { t } = useTranslation();
+    // WASAPI output mode, surfaced beside the bar. 'off' means the feature is disabled.
+    const wasapiMode = useWasapiStatusStore(state => state.mode);
 
     // Keeps continuous progress on the compositor while coarse values update only when needed.
     const updateUI = useCallback((value: number, force = false, syncInput = true, bypassDrag = false) => {
@@ -162,6 +167,18 @@ const ProgressBar: React.FC<ProgressBarProps> = ({
             <span className="text-[10px] font-mono font-medium opacity-60 w-8" style={{ color: secondaryColor }}>
                 {formatTime(duration)}
             </span>
+
+            {wasapiMode !== 'off' && (
+                <span
+                    className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full border whitespace-nowrap shrink-0"
+                    style={{
+                        color: wasapiMode === 'exclusive' ? primaryColor : secondaryColor,
+                        borderColor: trackColor,
+                    }}
+                >
+                    {wasapiMode === 'exclusive' ? t('options.wasapiModeExclusive') : t('options.wasapiModeShared')}
+                </span>
+            )}
         </div>
     );
 };

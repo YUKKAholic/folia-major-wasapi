@@ -60,6 +60,8 @@ const createWasapiEngine = ({ app }) => {
             ffmpegPath = await resolveFfmpegPath();
             log(`init native=${nativePath} ffmpeg=${ffmpegPath} log=${logPath}`);
             worker = new Worker(path.join(__dirname, 'wasapiWorker.cjs'));
+            // Never let the worker (or its native playback thread) keep the app alive on quit.
+            worker.unref();
 
             const result = new Promise((resolve, reject) => {
                 const onMessage = (msg) => {
@@ -94,7 +96,8 @@ const createWasapiEngine = ({ app }) => {
 
     const handleMessage = (msg) => {
         if (!msg || typeof msg.type !== 'string') return;
-        log(`event ${JSON.stringify(msg)}`);
+        // `position` fires four times a second; keep it out of the log file.
+        if (msg.type !== 'position') log(`event ${JSON.stringify(msg)}`);
         if (msg.type === 'listDevices-result') {
             if (listDevicesPending) {
                 listDevicesPending.resolve(msg.devices || []);
@@ -147,15 +150,35 @@ const createWasapiEngine = ({ app }) => {
     const setDevice = (deviceId) => send({ type: 'setDevice', deviceId: deviceId || '' });
 
     const dispose = async () => {
-        if (worker) {
-            log('dispose');
-            worker.postMessage({ type: 'close' });
-            await new Promise((resolve) => setTimeout(resolve, 100));
-            await worker.terminate().catch(() => {});
-            worker = null;
-            ready = false;
-            initPromise = null;
+        const current = worker;
+        if (!current) return;
+        worker = null;
+        ready = false;
+        initPromise = null;
+        log('dispose');
+        // Ask the worker to close the native renderer (which stops its Rust playback thread and
+        // releases the exclusive endpoint) and wait briefly for it to report back before the hard
+        // terminate. Without this the native thread can outlive the worker and stall app exit.
+        try {
+            current.postMessage({ type: 'close' });
+        } catch {
+            // Already gone.
         }
+        await new Promise((resolve) => {
+            let settled = false;
+            const done = () => {
+                if (settled) return;
+                settled = true;
+                resolve();
+            };
+            current.once('message', (msg) => {
+                if (msg && msg.type === 'closed') done();
+            });
+            current.once('exit', done);
+            const timer = setTimeout(done, 800);
+            if (typeof timer?.unref === 'function') timer.unref();
+        });
+        await current.terminate().catch(() => {});
     };
 
     return {

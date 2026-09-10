@@ -12,6 +12,7 @@ import { SettingsAnchor } from './navigation/SettingsAnchorContext';
 import SettingsSectionHeading from './navigation/SettingsSectionHeading';
 import { useLyricSettingsStore } from '../../../stores/useLyricSettingsStore';
 import { useAudioSettingsStore } from '../../../stores/useAudioSettingsStore';
+import { useWasapiStatusStore } from '../../../stores/useWasapiStatusStore';
 import { useOnlineProviderAccountStore } from '../../../stores/useOnlineProviderAccountStore';
 import { isNeteaseScrobbleReady } from '../../../services/onlineMusic/playbackReportGate';
 
@@ -106,6 +107,12 @@ const PlaybackSettingsSubview: React.FC<PlaybackSettingsSubviewProps> = ({
     } = useAudioOutputDevices(audioOutputDeviceId);
     const [isSelectingAudioOutput, setIsSelectingAudioOutput] = useState(false);
     const [wasapiDevices, setWasapiDevices] = useState<WasapiDevice[]>([]);
+    const wasapiMode = useWasapiStatusStore(state => state.mode);
+    const wasapiModeLabel = wasapiMode === 'exclusive'
+        ? t('options.wasapiModeExclusive')
+        : wasapiMode === 'shared'
+            ? t('options.wasapiModeShared')
+            : t('options.wasapiModeOff');
     // Enumerated on demand while exclusive mode is on: the native list includes endpoints that
     // Chromium's device picker hides, and it is what the WASAPI engine can actually open.
     useEffect(() => {
@@ -449,8 +456,16 @@ const PlaybackSettingsSubview: React.FC<PlaybackSettingsSubviewProps> = ({
                         <div className="space-y-3 border-b border-current/10 pb-4">
                             <div className="flex items-start justify-between gap-3">
                                 <div className="space-y-1">
-                                    <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                                    <div className="text-sm font-medium flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
                                         {t('options.wasapiExclusive')}
+                                        {enableWasapiExclusive && (
+                                            <span
+                                                className="text-[10px] px-1.5 py-0.5 rounded-full border shrink-0"
+                                                style={{ borderColor: 'var(--border-primary, rgba(255,255,255,0.12))', color: 'var(--text-secondary)' }}
+                                            >
+                                                {wasapiModeLabel}
+                                            </span>
+                                        )}
                                     </div>
                                     <div className="text-[11px] opacity-50 max-w-[420px]" style={{ color: 'var(--text-secondary)' }}>
                                         {t('options.wasapiExclusiveDesc')}

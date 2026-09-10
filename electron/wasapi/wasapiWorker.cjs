@@ -42,8 +42,10 @@ let playing = false;
 let positionTimer = null;
 /** Explicit exclusive output device id ('' = system default). */
 let deviceId = '';
-/** Temp file backing a downloaded URL source, removed when playback moves on. */
+/** Temp file backing a downloaded URL source, removed when the source changes or on stop. */
 let tempSourcePath = null;
+/** The URL `tempSourcePath` was downloaded from, so repeated play/seek reuses it. */
+let tempSourceKey = null;
 /** Shared debug log file (main process path); best-effort. */
 let logPath = null;
 
@@ -87,6 +89,7 @@ const cleanupTemp = () => {
             // Best effort.
         }
         tempSourcePath = null;
+        tempSourceKey = null;
     }
 };
 
@@ -174,8 +177,14 @@ const resolveSource = async (source) => {
         return { path: source.filePath, temp: false };
     }
     if (source && typeof source.url === 'string' && source.url) {
+        // Reuse the already-downloaded copy when the same URL plays again (resume / seek), so a
+        // seek does not re-download the whole track.
+        if (tempSourcePath && tempSourceKey === source.url && fs.existsSync(tempSourcePath)) {
+            wlog('reuse downloaded temp file');
+            return { path: tempSourcePath, temp: true, key: source.url };
+        }
         const tmp = await downloadToTemp(source.url);
-        return { path: tmp, temp: true };
+        return { path: tmp, temp: true, key: source.url };
     }
     throw new Error('unsupported audio source');
 };
@@ -206,18 +215,59 @@ const findWavDataOffset = (buf) => {
     return -1;
 };
 
-// Feeds PCM into the renderer, blocking (in this worker) until accepted.
-const feed = (pcm) => {
-    if (!renderer || !playing) return;
-    let off = 0;
-    while (off < pcm.length) {
-        const accepted = renderer.writePcm(pcm.subarray(off));
-        off += accepted;
-        if (accepted === 0) {
-            // Ring full: writePcm already blocked with a timeout.
+// PCM waiting to be handed to the renderer. Drained asynchronously so the worker's event loop -
+// and therefore stop/pause/seek handling - is never blocked by a full renderer ring.
+let feedQueue = [];
+let feedQueuedBytes = 0;
+let feedScheduled = false;
+const MAX_FEED_QUEUE_BYTES = 64 * 1024 * 1024;
+
+const clearFeedQueue = () => {
+    feedQueue = [];
+    feedQueuedBytes = 0;
+};
+
+const scheduleDrain = () => {
+    if (feedScheduled) return;
+    feedScheduled = true;
+    setImmediate(drainFeed);
+};
+
+const drainFeed = () => {
+    feedScheduled = false;
+    if (!renderer || !playing) {
+        clearFeedQueue();
+        return;
+    }
+    while (feedQueue.length > 0) {
+        const head = feedQueue[0];
+        const accepted = renderer.writePcm(head);
+        if (accepted === 0) break;
+        if (accepted < head.length) {
+            feedQueue[0] = head.subarray(accepted);
+            feedQueuedBytes -= accepted;
             break;
         }
+        feedQueue.shift();
+        feedQueuedBytes -= head.length;
     }
+    if (feedQueue.length > 0) {
+        // Ring still full; try again shortly without blocking.
+        setTimeout(scheduleDrain, 15);
+    }
+};
+
+// Queues a decoded PCM chunk and schedules an async drain.
+const feed = (pcm) => {
+    if (!renderer || !playing || pcm.length === 0) return;
+    feedQueue.push(pcm);
+    feedQueuedBytes += pcm.length;
+    // Bound memory if the consumer stops draining.
+    while (feedQueuedBytes > MAX_FEED_QUEUE_BYTES && feedQueue.length > 1) {
+        const dropped = feedQueue.shift();
+        feedQueuedBytes -= dropped.length;
+    }
+    scheduleDrain();
 };
 
 // Maps a source bit depth to the FFmpeg PCM encoder and the exclusive-mode output depth.
@@ -289,14 +339,21 @@ const startDecode = ({ filePath, sampleRate, channels, startSec, codec }) => {
 
 const startPlayback = async ({ source, startSec, deviceId: messageDeviceId }) => {
     killFfmpeg();
+    clearFeedQueue();
     clearPositionTimer();
     closeRenderer();
-    cleanupTemp();
+
+    // Drop the previous download only when the source actually changed (local file, or a new URL).
+    const nextUrl = source && typeof source.url === 'string' ? source.url : null;
+    if (nextUrl === null || (tempSourceKey && tempSourceKey !== nextUrl)) {
+        cleanupTemp();
+    }
 
     wlog(`play startSec=${startSec} source=${JSON.stringify(source).slice(0, 240)}`);
     const resolved = await resolveSource(source);
     if (resolved.temp) {
         tempSourcePath = resolved.path;
+        tempSourceKey = resolved.key ?? nextUrl;
     }
     const filePath = resolved.path;
 
@@ -368,6 +425,7 @@ parentPort.on('message', (msg) => {
         case 'pause':
             playing = false;
             killFfmpeg();
+            clearFeedQueue();
             stopRenderer();
             clearPositionTimer();
             post({ type: 'paused', positionMs: currentPositionMs() });
@@ -375,6 +433,7 @@ parentPort.on('message', (msg) => {
         case 'stop':
             playing = false;
             killFfmpeg();
+            clearFeedQueue();
             stopRenderer();
             clearPositionTimer();
             cleanupTemp();
@@ -383,6 +442,7 @@ parentPort.on('message', (msg) => {
         case 'close':
             playing = false;
             killFfmpeg();
+            clearFeedQueue();
             clearPositionTimer();
             closeRenderer();
             cleanupTemp();
