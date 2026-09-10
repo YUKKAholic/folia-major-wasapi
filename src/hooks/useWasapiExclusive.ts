@@ -26,8 +26,6 @@ import i18n from '../i18n/config';
 const WATCHDOG_MS = 12000;
 /** Online playback downloads the whole file first; allow well past the worker's 60s fetch cap. */
 const WATCHDOG_URL_MS = 70000;
-/** Online exclusive starts after a whole-file download; realign to the element's position past this. */
-const ALIGN_THRESHOLD_SEC = 2;
 
 const resolveLocalFilePath = async (song: SongResult): Promise<string | null> => {
     const songId = (song as SongResult & { localRef?: { songId?: string } }).localRef?.songId;
@@ -35,6 +33,28 @@ const resolveLocalFilePath = async (song: SongResult): Promise<string | null> =>
     const songs = await getLocalSongs();
     const record = songs.find(candidate => candidate.id === songId);
     return record?.filePath ?? null;
+};
+
+/** True for an absolute Windows path (drive-letter or UNC). Folia stores relative paths for
+ * folder-granted libraries, which the main process cannot open directly. */
+const isAbsoluteWindowsPath = (value: string): boolean =>
+    /^[a-zA-Z]:[\\/]/.test(value) || value.startsWith('\\\\');
+
+/** Reads a renderer-local source (blob URL) into bytes the engine can spill to a temp file. */
+const bufferFromAudioSrc = async (
+    audioSrc: string | null,
+    name: string,
+): Promise<{ source: WasapiSource; key: string; isUrl: boolean } | null> => {
+    if (typeof audioSrc !== 'string' || !audioSrc) return null;
+    try {
+        const response = await fetch(audioSrc);
+        if (!response.ok) return null;
+        const bytes = await response.arrayBuffer();
+        if (bytes.byteLength === 0) return null;
+        return { source: { kind: 'buffer', name, bytes }, key: `buf:${name}`, isUrl: false };
+    } catch {
+        return null;
+    }
 };
 
 /** Resolves the engine source and a stable key for the current song, or null when unsupported. */
@@ -45,13 +65,28 @@ const resolveWasapiSource = async (
 ): Promise<{ source: WasapiSource; key: string; isUrl: boolean } | null> => {
     if (isLocalPlaybackSong(song)) {
         const filePath = await resolveLocalFilePath(song);
-        return filePath ? { source: { filePath }, key: `file:${filePath}`, isUrl: false } : null;
+        if (filePath && isAbsoluteWindowsPath(filePath)) {
+            return { source: { filePath }, key: `file:${filePath}`, isUrl: false };
+        }
+        // Folia exposes library files through a File System Access handle, so there is no OS path;
+        // hand the engine the blob the player is already using instead.
+        return bufferFromAudioSrc(audioSrc, `blob:${audioSrc}`);
     }
-    if (allowOnline && typeof audioSrc === 'string' && /^https?:\/\//i.test(audioSrc)) {
+    if (typeof audioSrc !== 'string' || !audioSrc) return null;
+    if (/^https?:\/\//i.test(audioSrc)) {
+        if (!allowOnline) return null;
         return { source: { url: audioSrc }, key: `url:${audioSrc}`, isUrl: true };
+    }
+    // A cached track is served as a blob URL; send its bytes when online exclusive is enabled.
+    if (allowOnline && audioSrc.startsWith('blob:')) {
+        return bufferFromAudioSrc(audioSrc, `blob:${audioSrc}`);
     }
     return null;
 };
+
+/** The reusable form of a source: a buffer's bytes are only sent on the first play. */
+const sourceRef = (source: WasapiSource): WasapiSource =>
+    'kind' in source && source.kind === 'buffer' ? { kind: 'buffer', name: source.name } : source;
 
 export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>) => {
     const enableWasapiExclusive = useAudioSettingsStore(state => state.enableWasapiExclusive);
@@ -65,7 +100,6 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
     const activeSourceRef = useRef<{ source: WasapiSource; key: string; playing: boolean; isUrl: boolean } | null>(null);
     const failedSourcesRef = useRef<Set<string>>(new Set());
     const watchdogRef = useRef<number | null>(null);
-    const needsAlignRef = useRef(false);
     const lastMessageRef = useRef<string | null>(null);
     const lastModeRef = useRef<WasapiMode>('off');
     /** Once an online track fails exclusive, stop trying online for the rest of the session. */
@@ -105,7 +139,6 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
 
     const dropToSharedMode = () => {
         activeSourceRef.current = null;
-        needsAlignRef.current = false;
         applyMode('shared');
         // The engine is not going to play this source: hand the output back to Chromium so the
         // (already running) HTML5 element is audible again instead of leaving it muted.
@@ -127,7 +160,6 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
             void wasapi.stop();
             void wasapi.setRendererMuted(false);
             activeSourceRef.current = null;
-            needsAlignRef.current = false;
             applyMode('off');
         }
         return () => {
@@ -179,9 +211,8 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
                 // Same source: only react to an actual play/pause transition.
                 if (playerState === PlayerState.PLAYING && !active.playing) {
                     active.playing = true;
-                    needsAlignRef.current = resolved.isUrl;
                     armWatchdog();
-                    void wasapi.resume(resolved.source, audioRef.current?.currentTime ?? 0);
+                    void wasapi.resume(sourceRef(active.source), audioRef.current?.currentTime ?? 0);
                 } else if (playerState === PlayerState.PAUSED && active.playing) {
                     active.playing = false;
                     clearWatchdog();
@@ -191,8 +222,8 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
             }
             if (playerState === PlayerState.PLAYING) {
                 // New source: start it and let the HTML5 play until the engine reports `started`.
-                activeSourceRef.current = { source: resolved.source, key, playing: true, isUrl: resolved.isUrl };
-                needsAlignRef.current = resolved.isUrl;
+                // The full source (with bytes for a buffer) is sent once; later reuse drops them.
+                activeSourceRef.current = { source: sourceRef(resolved.source), key, playing: true, isUrl: resolved.isUrl };
                 void wasapi.setDevice(wasapiDeviceId);
                 armWatchdog(resolved.isUrl ? WATCHDOG_URL_MS : WATCHDOG_MS);
                 void wasapi.play(resolved.source, 0);
@@ -213,7 +244,6 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
         const onSeeked = () => {
             const active = activeSourceRef.current;
             if (!active || failedSourcesRef.current.has(active.key)) return;
-            needsAlignRef.current = false;
             armWatchdog();
             void wasapi.seek(active.source, element.currentTime);
         };
@@ -230,17 +260,6 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
             if (event.type === 'started') {
                 applyMode('exclusive', true);
                 void wasapi.setRendererMuted(true);
-                // Online tracks are downloaded in full before playback, so the engine starts at 0
-                // while the element has moved on; realign once so the handover is not a restart.
-                if (needsAlignRef.current) {
-                    needsAlignRef.current = false;
-                    const active = activeSourceRef.current;
-                    const element = audioRef.current;
-                    if (active && element && element.currentTime > ALIGN_THRESHOLD_SEC) {
-                        armWatchdog();
-                        void wasapi.seek(active.source, element.currentTime);
-                    }
-                }
                 if (!event.bitPerfect && lastMessageRef.current !== 'not-bit-perfect') {
                     lastMessageRef.current = 'not-bit-perfect';
                     setStatusMessage({ type: 'info', text: i18n.t('options.wasapiNotBitPerfect') });

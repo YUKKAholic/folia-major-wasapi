@@ -27,12 +27,11 @@ const createWasapiEngine = ({ app }) => {
     }
 
     const log = (message) => {
+        if (!logPath) return;
         const line = `[${new Date().toISOString()}] ${message}\n`;
-        try {
-            if (logPath) fs.appendFileSync(logPath, line);
-        } catch {
-            // Logging must never break playback.
-        }
+        // Asynchronous on purpose: a synchronous append on the main thread can stall the app's
+        // event loop (and therefore the tray) when the disk is busy.
+        fs.appendFile(logPath, line, () => {});
     };
 
     // The native addon ships unpacked next to this file.

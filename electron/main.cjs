@@ -5477,10 +5477,11 @@ app.on('before-quit', () => {
   if (wasapiEngine) {
     void wasapiEngine.dispose();
     wasapiEngine = null;
-    // Backstop: a lingering WASAPI worker (or its native playback thread) must never keep the
-    // process - and its tray icon - alive. Force exit if the graceful teardown does not finish.
-    const forceExitTimer = setTimeout(() => app.exit(0), 2500);
-    if (typeof forceExitTimer?.unref === 'function') forceExitTimer.unref();
+  }
+  // Backstop: the WASAPI worker (or its native playback thread) must never keep the process - and
+  // its tray icon - alive. Force exit if the graceful teardown does not finish promptly.
+  if (process.platform === 'win32' && !isAppQuitting) {
+    setTimeout(() => app.exit(0), 1500);
   }
   isAppQuitting = true;
   clearPendingWindowPlaybackHandoffRequests();

@@ -46,16 +46,19 @@ let deviceId = '';
 let tempSourcePath = null;
 /** The URL `tempSourcePath` was downloaded from, so repeated play/seek reuses it. */
 let tempSourceKey = null;
+/** Serializes play/resume/seek so two exclusive opens never race for the same endpoint. */
+let playbackBusy = false;
+let pendingPlayback = null;
+/** Bumped per playback; stale FFmpeg children and events are ignored by generation. */
+let playbackGeneration = 0;
 /** Shared debug log file (main process path); best-effort. */
 let logPath = null;
 
 const wlog = (message) => {
     if (!logPath) return;
-    try {
-        fs.appendFileSync(logPath, `[${new Date().toISOString()}] worker ${message}\n`);
-    } catch {
-        // Logging must never break playback.
-    }
+    // Asynchronous so logging never blocks the worker's event loop (which must keep servicing
+    // stop/pause/seek).
+    fs.appendFile(logPath, `[${new Date().toISOString()}] worker ${message}\n`, () => {});
 };
 
 // Turns a bare AUDCLNT HRESULT into a phrase a user can act on.
@@ -186,12 +189,59 @@ const downloadToTemp = async (url) => {
     }
 };
 
-// Resolves a source descriptor to a local file FFmpeg can read, downloading a URL first.
+// Temp files written from renderer-supplied audio bytes, keyed by a stable name so a seek reuses
+// the copy instead of re-sending tens of megabytes over IPC.
+const bufferCache = new Map();
+const MAX_BUFFER_CACHE = 3;
+
+const evictBufferCache = () => {
+    while (bufferCache.size > MAX_BUFFER_CACHE) {
+        const [key, value] = bufferCache.entries().next().value;
+        bufferCache.delete(key);
+        try {
+            fs.rmSync(value, { force: true });
+        } catch {
+            // Best effort.
+        }
+    }
+};
+
+const clearBufferCache = () => {
+    bufferCache.forEach((value) => {
+        try {
+            fs.rmSync(value, { force: true });
+        } catch {
+            // Best effort.
+        }
+    });
+    bufferCache.clear();
+};
+
+// Resolves a source descriptor to a local file FFmpeg can read, downloading a URL or spilling
+// renderer-provided bytes to a temp file first.
 const resolveSource = async (source) => {
-    if (source && typeof source.filePath === 'string' && source.filePath) {
+    if (!source) throw new Error('unsupported audio source');
+    if (source.kind === 'buffer') {
+        const cached = bufferCache.get(source.name);
+        if (cached && fs.existsSync(cached)) {
+            wlog('reuse buffered audio');
+            return { path: cached, temp: false, key: `buf:${source.name}` };
+        }
+        if (!source.bytes) throw new Error('audio buffer missing');
+        const buffer = Buffer.from(source.bytes);
+        const tmp = path.join(
+            os.tmpdir(),
+            `folia-wasapi-buf-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.audio`,
+        );
+        fs.writeFileSync(tmp, buffer);
+        bufferCache.set(source.name, tmp);
+        evictBufferCache();
+        return { path: tmp, temp: false, key: `buf:${source.name}` };
+    }
+    if (typeof source.filePath === 'string' && source.filePath) {
         return { path: source.filePath, temp: false };
     }
-    if (source && typeof source.url === 'string' && source.url) {
+    if (typeof source.url === 'string' && source.url) {
         // Reuse the already-downloaded copy when the same URL plays again (resume / seek), so a
         // seek does not re-download the whole track.
         if (tempSourcePath && tempSourceKey === source.url && fs.existsSync(tempSourcePath)) {
@@ -293,7 +343,7 @@ const pickCodec = (bitsPerSample) => {
 };
 
 // Decodes `filePath` to PCM (WAV on stdout) and feeds the renderer in real time.
-const startDecode = ({ filePath, sampleRate, channels, startSec, codec }) => {
+const startDecode = ({ filePath, sampleRate, channels, startSec, codec, generation }) => {
     const args = [
         '-hide_banner', '-nostdin', '-v', 'error',
         ...(startSec > 0 ? ['-ss', String(startSec)] : []),
@@ -312,6 +362,8 @@ const startDecode = ({ filePath, sampleRate, channels, startSec, codec }) => {
     let dataStarted = false;
 
     child.stdout.on('data', (chunk) => {
+        // A newer playback has taken over; drop this child's output.
+        if (generation !== playbackGeneration) return;
         if (dataStarted) {
             feed(chunk);
             return;
@@ -328,6 +380,7 @@ const startDecode = ({ filePath, sampleRate, channels, startSec, codec }) => {
     child.stderr.on('data', () => {});
 
     child.once('error', (err) => {
+        if (generation !== playbackGeneration) return;
         killFfmpeg();
         // FFmpeg could not run: exclusive playback is impossible, tell the renderer to fall back
         // to the HTML5 (shared-mode) output.
@@ -336,9 +389,10 @@ const startDecode = ({ filePath, sampleRate, channels, startSec, codec }) => {
 
     child.once('close', () => {
         if (ffmpeg === child) ffmpeg = null;
+        if (generation !== playbackGeneration) return; // superseded
         if (!playing) return;
         const waitDrain = () => {
-            if (!playing) return;
+            if (generation !== playbackGeneration || !playing) return;
             const buffered = renderer ? renderer.getBufferedBytes() : 0;
             if (buffered <= 0) {
                 playing = false;
@@ -352,7 +406,35 @@ const startDecode = ({ filePath, sampleRate, channels, startSec, codec }) => {
     });
 };
 
-const startPlayback = async ({ source, startSec, deviceId: messageDeviceId }) => {
+// Opens the exclusive renderer, retrying briefly while a previous stream is still releasing the
+// endpoint (AUDCLNT_E_DEVICE_IN_USE, 0x8889000a).
+const openRendererWithRetry = async (targetDeviceId, format, openBits) => {
+    let lastError = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        const candidate = new native.FoliaWasapi();
+        try {
+            candidate.openExclusive(targetDeviceId || '', {
+                sampleRate: format.sampleRate,
+                channels: format.channels,
+                bitsPerSample: openBits,
+                isFloat: false,
+            });
+            return candidate;
+        } catch (error) {
+            lastError = error;
+            try {
+                candidate.close();
+            } catch {
+                // Ignore.
+            }
+            if (!/0x8889000a/i.test(String(error && error.message || ''))) break;
+            await new Promise((resolve) => setTimeout(resolve, 200));
+        }
+    }
+    throw lastError;
+};
+
+const startPlayback = async ({ source, startSec, deviceId: messageDeviceId }, generation) => {
     killFfmpeg();
     clearFeedQueue();
     clearPositionTimer();
@@ -381,19 +463,13 @@ const startPlayback = async ({ source, startSec, deviceId: messageDeviceId }) =>
 
     const targetDeviceId = typeof messageDeviceId === 'string' ? messageDeviceId : deviceId;
     wlog(`openExclusive device=${targetDeviceId || '(default)'}`);
-    renderer = new native.FoliaWasapi();
-    renderer.openExclusive(targetDeviceId || '', {
-        sampleRate: format.sampleRate,
-        channels: format.channels,
-        bitsPerSample: openBits,
-        isFloat: false,
-    });
+    renderer = await openRendererWithRetry(targetDeviceId, format, openBits);
 
     positionBaseMs = startSec * 1000;
     playing = true;
     renderer.start();
     wlog('renderer started');
-    startDecode({ filePath, sampleRate: format.sampleRate, channels: format.channels, startSec, codec });
+    startDecode({ filePath, sampleRate: format.sampleRate, channels: format.channels, startSec, codec, generation });
     post({ type: 'started', positionMs: positionBaseMs, bitPerfect });
 
     positionTimer = setInterval(() => {
@@ -401,6 +477,42 @@ const startPlayback = async ({ source, startSec, deviceId: messageDeviceId }) =>
             post({ type: 'position', positionMs: currentPositionMs() });
         }
     }, 250);
+};
+
+// Runs playbacks one at a time. Commands that arrive while one is running are coalesced to the
+// latest, so rapid play/seek changes never open two exclusive streams at once (DEVICE_IN_USE).
+const runPlayback = async (msg) => {
+    playbackBusy = true;
+    const generation = ++playbackGeneration;
+    // A newer playback supersedes anything still in flight: stop the previous stream first.
+    killFfmpeg();
+    clearFeedQueue();
+    try {
+        await startPlayback(msg, generation);
+    } catch (err) {
+        if (generation === playbackGeneration) {
+            playing = false;
+            cleanupTemp();
+            const described = describeAudioError(String(err && err.message || err));
+            wlog(`startPlayback failed -> fallback: ${described}`);
+            post({ type: 'fallback', message: described });
+        }
+    } finally {
+        playbackBusy = false;
+        if (pendingPlayback) {
+            const next = pendingPlayback;
+            pendingPlayback = null;
+            void runPlayback(next);
+        }
+    }
+};
+
+const requestPlayback = (msg) => {
+    if (playbackBusy) {
+        pendingPlayback = msg;
+        return;
+    }
+    void runPlayback(msg);
 };
 
 parentPort.on('message', (msg) => {
@@ -429,16 +541,11 @@ parentPort.on('message', (msg) => {
         case 'play':
         case 'resume':
         case 'seek':
-            startPlayback(msg).catch((err) => {
-                playing = false;
-                cleanupTemp();
-                const described = describeAudioError(String(err && err.message || err));
-                wlog(`startPlayback failed -> fallback: ${described}`);
-                // Device/format/probe/download failure: fall back to shared mode rather than going silent.
-                post({ type: 'fallback', message: described });
-            });
+            requestPlayback(msg);
             break;
         case 'pause':
+            pendingPlayback = null;
+            playbackGeneration += 1;
             playing = false;
             killFfmpeg();
             clearFeedQueue();
@@ -447,6 +554,8 @@ parentPort.on('message', (msg) => {
             post({ type: 'paused', positionMs: currentPositionMs() });
             break;
         case 'stop':
+            pendingPlayback = null;
+            playbackGeneration += 1;
             playing = false;
             killFfmpeg();
             clearFeedQueue();
@@ -456,12 +565,15 @@ parentPort.on('message', (msg) => {
             post({ type: 'stopped' });
             break;
         case 'close':
+            pendingPlayback = null;
+            playbackGeneration += 1;
             playing = false;
             killFfmpeg();
             clearFeedQueue();
             clearPositionTimer();
             closeRenderer();
             cleanupTemp();
+            clearBufferCache();
             post({ type: 'closed' });
             break;
         default:

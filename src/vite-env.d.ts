@@ -604,8 +604,18 @@ declare global {
     name: string;
   }
 
-  /** A playable source for the WASAPI engine: a local file or a remote URL (downloaded first). */
-  type WasapiSource = { filePath: string } | { url: string };
+  /**
+   * A playable source for the WASAPI engine:
+   * - `filePath`: an absolute local path.
+   * - `url`: a remote URL (the worker downloads it first).
+   * - `buffer`: raw audio bytes handed over by the renderer (used for library files Folia only
+   *   exposes via a File System Access handle, so no OS path exists). `bytes` is only sent on the
+   *   first play; later seeks reference the cached copy by `name`.
+   */
+  type WasapiSource =
+    | { filePath: string }
+    | { url: string }
+    | { kind: 'buffer'; name: string; bytes?: ArrayBuffer };
 
   type WasapiEvent =
     | { type: 'started'; positionMs: number; bitPerfect: boolean }
