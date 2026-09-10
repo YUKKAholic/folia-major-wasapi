@@ -131,6 +131,34 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
     };
 
     /**
+     * Chromium only recreates its audio stream after exclusive mode tore it down when the element
+     * is pause+played. Wait until the element has data so an online stream is not aborted mid-buffer.
+     */
+    const rebuildChromiumOutput = () => {
+        const element = audioRef.current;
+        if (!element) return;
+        if (usePlaybackStore.getState().playerState !== PlayerState.PLAYING) return;
+        const forceRecreate = () => {
+            try {
+                element.pause();
+            } catch {
+                // ignore
+            }
+            void element.play().catch(() => {});
+        };
+        if (element.readyState >= 3) {
+            forceRecreate();
+            return;
+        }
+        const onReady = () => {
+            element.removeEventListener('canplay', onReady);
+            forceRecreate();
+        };
+        element.addEventListener('canplay', onReady, { once: true });
+        window.setTimeout(() => element.removeEventListener('canplay', onReady), 10000);
+    };
+
+    /**
      * Hands the output back to Chromium. `rebuild` forces a pause+play so Chromium recreates its
      * audio stream after exclusive mode tore it down; it must only run once the endpoint is
      * released (the worker's `stopped`/`ended` events), or Chromium cannot acquire it back.
@@ -139,15 +167,7 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
         void window.electron?.wasapi?.setRendererMuted(false);
         if (!rebuild || !exclusiveActiveRef.current) return;
         exclusiveActiveRef.current = false;
-        const element = audioRef.current;
-        if (element && usePlaybackStore.getState().playerState === PlayerState.PLAYING) {
-            try {
-                element.pause();
-            } catch {
-                // ignore
-            }
-            void element.play().catch(() => {});
-        }
+        rebuildChromiumOutput();
     };
 
     // If the engine neither starts nor reports a problem in time, stop trying and restore sound.
@@ -162,11 +182,13 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
     };
 
     const dropToSharedMode = () => {
+        const hadEngine = activeSourceRef.current !== null || exclusiveActiveRef.current;
         activeSourceRef.current = null;
         applyMode('shared');
         // Release the engine and unmute now; the worker's `stopped` event rebuilds Chromium's
-        // output once the endpoint is actually free.
-        void window.electron?.wasapi?.stop();
+        // output once the endpoint is actually free. Skip the stop when the engine never took the
+        // output (e.g. an online track on shared mode), so its element is not disturbed.
+        if (hadEngine) void window.electron?.wasapi?.stop();
         restoreChromiumOutput(false);
     };
 

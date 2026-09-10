@@ -55,9 +55,6 @@ let playbackGeneration = 0;
  *  instead of closing and reopening it (a running exclusive stream releases slowly, and the
  *  reopen then races the release with AUDCLNT_E_DEVICE_IN_USE). */
 let openFormatKey = null;
-/** Device clock value (ms) at the point the current track started; the device clock is cumulative
- *  across a reused stream, so playback position is (device - this offset). */
-let positionOffsetMs = 0;
 /** Shared debug log file (main process path); best-effort. */
 let logPath = null;
 
@@ -138,7 +135,6 @@ const closeRenderer = () => {
         renderer = null;
     }
     openFormatKey = null;
-    positionOffsetMs = 0;
 };
 
 const clearPositionTimer = () => {
@@ -151,7 +147,7 @@ const clearPositionTimer = () => {
 const currentPositionMs = () => {
     if (!renderer) return positionBaseMs;
     try {
-        return positionBaseMs + (renderer.getPositionMs() - positionOffsetMs);
+        return positionBaseMs + renderer.getPositionMs();
     } catch {
         return positionBaseMs;
     }
@@ -479,25 +475,21 @@ const startPlayback = async ({ source, startSec, deviceId: messageDeviceId }, ge
         // Same device and format: reuse the already-open exclusive stream. Stop+Reset keeps the
         // endpoint held, so there is no close/reopen race with the previous track.
         wlog('reuse open exclusive stream');
-        // The device clock keeps counting across a reused stream; anchor the new track to it.
-        try {
-            positionOffsetMs = renderer.getPositionMs();
-        } catch {
-            positionOffsetMs = 0;
-        }
         stopRenderer();
-        clearFeedQueue();
-        clearPositionTimer();
     } else {
         closeRenderer();
         wlog(`openExclusive device=${targetDeviceId || '(default)'}`);
         renderer = await openRendererWithRetry(targetDeviceId, format, openBits);
         openFormatKey = formatKey;
-        positionOffsetMs = 0;
     }
+    clearFeedQueue();
+    clearPositionTimer();
 
     positionBaseMs = startSec * 1000;
     playing = true;
+    try {
+        renderer.clearBuffer();
+    } catch {}
     renderer.start();
     wlog('renderer started');
     startDecode({ filePath, sampleRate: format.sampleRate, channels: format.channels, startSec, codec, generation });

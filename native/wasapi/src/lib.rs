@@ -94,6 +94,11 @@ impl FoliaWasapi {
     }
 
     #[napi]
+    pub fn clear_buffer(&self) {
+        self.inner.clear_buffer();
+    }
+
+    #[napi]
     pub fn get_buffered_bytes(&self) -> napi::Result<f64> {
         Ok(self.inner.get_buffered_bytes() as f64)
     }

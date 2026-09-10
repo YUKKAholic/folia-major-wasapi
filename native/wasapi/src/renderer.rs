@@ -95,6 +95,10 @@ impl PcmFormat {
 // Statistics shared between the playback thread and the JS side.
 struct Stats {
     position_frames: AtomicU64,
+    // The reused stream's device clock is cumulative, so each Start anchors a base to report the
+    // position relative to the current track.
+    position_base_frames: AtomicU64,
+    position_base_set: AtomicU64,
     frames_written: AtomicU64,
     event_count: AtomicU64,
     sample_rate: AtomicU64,
@@ -107,6 +111,8 @@ impl Default for Stats {
     fn default() -> Self {
         Self {
             position_frames: AtomicU64::new(0),
+            position_base_frames: AtomicU64::new(0),
+            position_base_set: AtomicU64::new(0),
             frames_written: AtomicU64::new(0),
             event_count: AtomicU64::new(0),
             sample_rate: AtomicU64::new(0),
@@ -234,6 +240,12 @@ impl WasapiRenderer {
         take
     }
 
+    /// Empties the ring buffer so a reused stream does not play the previous track's audio.
+    pub fn clear_buffer(&self) {
+        let mut guard = self.shared.ring.lock().unwrap();
+        guard.buf.clear();
+    }
+
     pub fn get_position_ms(&self) -> f64 {
         let frames = self.shared.stats.position_frames.load(Ordering::SeqCst);
         let sample_rate = self.shared.stats.sample_rate.load(Ordering::SeqCst);
@@ -328,6 +340,7 @@ fn playback_thread(shared: Arc<Shared>, cmd_rx: Receiver<Command>) {
                             .store(format.block_align() as u64, Ordering::SeqCst);
                         shared.stats.buffer_frames.store(buffer_fr as u64, Ordering::SeqCst);
                         shared.stats.position_frames.store(0, Ordering::SeqCst);
+                        shared.stats.position_base_set.store(0, Ordering::SeqCst);
                         *shared.stats.state.lock().unwrap() = RendererState::Ready;
                         Ok(())
                     },
@@ -337,6 +350,8 @@ fn playback_thread(shared: Arc<Shared>, cmd_rx: Receiver<Command>) {
             Command::Start { resp } => {
                 match (&client, &render, &clock, event_handle) {
                     (Some(c), Some(r), Some(clk), Some(evt)) => {
+                        // Anchor the position to the first clock reading of this run.
+                        shared.stats.position_base_set.store(0, Ordering::SeqCst);
                         match unsafe { c.Start() } {
                             Ok(()) => {
                                 *shared.stats.state.lock().unwrap() = RendererState::Playing;
@@ -503,10 +518,14 @@ fn render_loop(
         let mut device_pos = 0u64;
         let mut qpc = 0u64;
         if unsafe { clock.GetPosition(&mut device_pos, Some(&mut qpc)) }.is_ok() {
+            if shared.stats.position_base_set.swap(1, Ordering::SeqCst) == 0 {
+                shared.stats.position_base_frames.store(device_pos, Ordering::SeqCst);
+            }
+            let base = shared.stats.position_base_frames.load(Ordering::SeqCst);
             shared
                 .stats
                 .position_frames
-                .store(device_pos, Ordering::SeqCst);
+                .store(device_pos.saturating_sub(base), Ordering::SeqCst);
         }
 
         // Write the entire buffer (ping-pong: packet size must equal buffer size).
