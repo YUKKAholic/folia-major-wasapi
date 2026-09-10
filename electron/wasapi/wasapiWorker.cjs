@@ -58,6 +58,21 @@ const wlog = (message) => {
     }
 };
 
+// Turns a bare AUDCLNT HRESULT into a phrase a user can act on.
+const AUDCLNT_HINTS = {
+    '88890008': 'device does not support this audio format/sample rate',
+    '8889000a': 'device is already in use (another exclusive app?)',
+    '88890004': 'device was invalidated or unplugged',
+    '8889000e': 'exclusive mode is disabled for this device',
+    '88890019': 'device buffer size not aligned',
+    '88890020': 'invalid device period',
+};
+const describeAudioError = (message) => {
+    const match = /0x([0-9a-f]{8})/i.exec(String(message || ''));
+    const hint = match ? AUDCLNT_HINTS[match[1].toLowerCase()] : null;
+    return hint ? `${message} [${hint}]` : String(message ?? '');
+};
+
 const post = (msg) => {
     try {
         parentPort.postMessage(msg);
@@ -316,7 +331,7 @@ const startDecode = ({ filePath, sampleRate, channels, startSec, codec }) => {
         killFfmpeg();
         // FFmpeg could not run: exclusive playback is impossible, tell the renderer to fall back
         // to the HTML5 (shared-mode) output.
-        post({ type: 'fallback', message: err.message });
+        post({ type: 'fallback', message: describeAudioError(err.message) });
     });
 
     child.once('close', () => {
@@ -417,9 +432,10 @@ parentPort.on('message', (msg) => {
             startPlayback(msg).catch((err) => {
                 playing = false;
                 cleanupTemp();
-                wlog(`startPlayback failed -> fallback: ${String(err && err.message || err)}`);
+                const described = describeAudioError(String(err && err.message || err));
+                wlog(`startPlayback failed -> fallback: ${described}`);
                 // Device/format/probe/download failure: fall back to shared mode rather than going silent.
-                post({ type: 'fallback', message: String(err && err.message || err) });
+                post({ type: 'fallback', message: described });
             });
             break;
         case 'pause':

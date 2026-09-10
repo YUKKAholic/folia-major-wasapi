@@ -259,7 +259,12 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
                 void wasapi.setRendererMuted(false);
                 if (lastMessageRef.current !== event.message) {
                     lastMessageRef.current = event.message;
-                    setStatusMessage({ type: 'info', text: i18n.t('options.wasapiExclusiveFallback') });
+                    setStatusMessage({
+                        type: 'info',
+                        text: event.message
+                            ? `${i18n.t('options.wasapiExclusiveFallback')} (${event.message})`
+                            : i18n.t('options.wasapiExclusiveFallback'),
+                    });
                 }
                 return;
             }
