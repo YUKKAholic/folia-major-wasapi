@@ -2,9 +2,12 @@
 //
 // Main-process facade over the WASAPI worker. Resolves the native module and FFmpeg paths,
 // owns the worker thread, and exposes a small async API consumed by the IPC handlers.
+// Everything it does is mirrored to <userData>/wasapi-debug.log so a packaged build can be
+// diagnosed without a visible main-process console.
 
 'use strict';
 
+const fs = require('fs');
 const path = require('path');
 const { Worker } = require('worker_threads');
 const { resolveFfmpeg, TRANSCODE_RUNTIME_DIR } = require('../modSystem/ffmpeg.cjs');
@@ -16,6 +19,21 @@ const createWasapiEngine = ({ app }) => {
     let eventForwarder = null;
     let listDevicesPending = null;
     let ffmpegPath = '';
+    let logPath = null;
+    try {
+        logPath = path.join(app.getPath('userData'), 'wasapi-debug.log');
+    } catch {
+        logPath = null;
+    }
+
+    const log = (message) => {
+        const line = `[${new Date().toISOString()}] ${message}\n`;
+        try {
+            if (logPath) fs.appendFileSync(logPath, line);
+        } catch {
+            // Logging must never break playback.
+        }
+    };
 
     // The native addon ships unpacked next to this file.
     const resolveNativePath = () => {
@@ -38,8 +56,9 @@ const createWasapiEngine = ({ app }) => {
         if (ready) return;
         if (initPromise) return initPromise;
         initPromise = (async () => {
-            ffmpegPath = await resolveFfmpegPath();
             const nativePath = resolveNativePath();
+            ffmpegPath = await resolveFfmpegPath();
+            log(`init native=${nativePath} ffmpeg=${ffmpegPath} log=${logPath}`);
             worker = new Worker(path.join(__dirname, 'wasapiWorker.cjs'));
 
             const result = new Promise((resolve, reject) => {
@@ -59,16 +78,23 @@ const createWasapiEngine = ({ app }) => {
 
             worker.on('message', handleMessage);
             worker.on('error', (err) => {
+                log(`worker error: ${err && err.message}`);
                 if (eventForwarder) eventForwarder({ type: 'error', message: err.message });
             });
-            worker.postMessage({ type: 'init', nativePath, ffmpegPath });
+            worker.postMessage({ type: 'init', nativePath, ffmpegPath, logPath });
             await result;
-        })();
+            log('worker ready');
+        })().catch((error) => {
+            log(`init failed: ${error && error.message}`);
+            initPromise = null;
+            throw error;
+        });
         await initPromise;
     };
 
     const handleMessage = (msg) => {
         if (!msg || typeof msg.type !== 'string') return;
+        log(`event ${JSON.stringify(msg)}`);
         if (msg.type === 'listDevices-result') {
             if (listDevicesPending) {
                 listDevicesPending.resolve(msg.devices || []);
@@ -81,8 +107,8 @@ const createWasapiEngine = ({ app }) => {
 
     const listDevices = async () => {
         await ensureWorker();
-        return new Promise((resolve, reject) => {
-            listDevicesPending = { resolve, reject };
+        return new Promise((resolve) => {
+            listDevicesPending = { resolve };
             worker.postMessage({ type: 'listDevices' });
             setTimeout(() => {
                 if (listDevicesPending) {
@@ -95,6 +121,7 @@ const createWasapiEngine = ({ app }) => {
 
     const send = async (msg) => {
         await ensureWorker();
+        log(`send ${JSON.stringify(msg)}`);
         worker.postMessage(msg);
     };
 
@@ -121,6 +148,7 @@ const createWasapiEngine = ({ app }) => {
 
     const dispose = async () => {
         if (worker) {
+            log('dispose');
             worker.postMessage({ type: 'close' });
             await new Promise((resolve) => setTimeout(resolve, 100));
             await worker.terminate().catch(() => {});

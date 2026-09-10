@@ -44,6 +44,17 @@ let positionTimer = null;
 let deviceId = '';
 /** Temp file backing a downloaded URL source, removed when playback moves on. */
 let tempSourcePath = null;
+/** Shared debug log file (main process path); best-effort. */
+let logPath = null;
+
+const wlog = (message) => {
+    if (!logPath) return;
+    try {
+        fs.appendFileSync(logPath, `[${new Date().toISOString()}] worker ${message}\n`);
+    } catch {
+        // Logging must never break playback.
+    }
+};
 
 const post = (msg) => {
     try {
@@ -118,6 +129,7 @@ const currentPositionMs = () => {
 
 // Streams a remote audio URL to a temp file so the (network-disabled) FFmpeg build can read it.
 const downloadToTemp = async (url) => {
+    wlog(`download ${url.slice(0, 200)}`);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 60000);
     let tmp = null;
@@ -281,6 +293,7 @@ const startPlayback = async ({ source, startSec, deviceId: messageDeviceId }) =>
     closeRenderer();
     cleanupTemp();
 
+    wlog(`play startSec=${startSec} source=${JSON.stringify(source).slice(0, 240)}`);
     const resolved = await resolveSource(source);
     if (resolved.temp) {
         tempSourcePath = resolved.path;
@@ -292,8 +305,10 @@ const startPlayback = async ({ source, startSec, deviceId: messageDeviceId }) =>
     // FFmpeg build that carries the matching PCM encoders (see packaging/ffmpeg).
     const { codec, openBits } = pickCodec(format.bitsPerSample);
     const bitPerfect = openBits >= format.bitsPerSample;
+    wlog(`format sr=${format.sampleRate} ch=${format.channels} bits=${format.bitsPerSample} codec=${codec} openBits=${openBits}`);
 
     const targetDeviceId = typeof messageDeviceId === 'string' ? messageDeviceId : deviceId;
+    wlog(`openExclusive device=${targetDeviceId || '(default)'}`);
     renderer = new native.FoliaWasapi();
     renderer.openExclusive(targetDeviceId || '', {
         sampleRate: format.sampleRate,
@@ -305,6 +320,7 @@ const startPlayback = async ({ source, startSec, deviceId: messageDeviceId }) =>
     positionBaseMs = startSec * 1000;
     playing = true;
     renderer.start();
+    wlog('renderer started');
     startDecode({ filePath, sampleRate: format.sampleRate, channels: format.channels, startSec, codec });
     post({ type: 'started', positionMs: positionBaseMs, bitPerfect });
 
@@ -320,8 +336,10 @@ parentPort.on('message', (msg) => {
 
     switch (msg.type) {
         case 'init':
+            logPath = msg.logPath || null;
             loadNative(msg.nativePath);
             ffmpegPath = msg.ffmpegPath;
+            wlog(`init native=${msg.nativePath} ffmpeg=${msg.ffmpegPath}`);
             post({ type: 'init-result', ok: true });
             break;
         case 'listDevices': {
@@ -342,6 +360,7 @@ parentPort.on('message', (msg) => {
             startPlayback(msg).catch((err) => {
                 playing = false;
                 cleanupTemp();
+                wlog(`startPlayback failed -> fallback: ${String(err && err.message || err)}`);
                 // Device/format/probe/download failure: fall back to shared mode rather than going silent.
                 post({ type: 'fallback', message: String(err && err.message || err) });
             });

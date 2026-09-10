@@ -112,6 +112,16 @@ node native/wasapi/decode-test24.mjs   # 校验 24-bit 解码输出
 | 24-bit 源提示按 16-bit 输出 | 使用的是上游 16-bit FFmpeg | 执行 `npm run build:ffmpeg:wasapi` 后重新打包 |
 | 原生模块加载失败 | `.node` 未构建或未 unpack | 执行 `npm run build:wasapi`；确认打包时 `asarUnpack` 生效 |
 
+### 调试日志
+
+WASAPI 引擎与 worker 会把每一步（初始化路径、`play/resume/seek/stop`、设备、格式、`started/fallback/error`）写入：
+
+```
+%APPDATA%\Folia\wasapi-debug.log
+```
+
+打包版没有可见的主进程控制台，排查时以这个文件为准。想看实时控制台，可从源码运行 `npm run dev:electron`。
+
 ## 七、相关文件速查
 
 ```
