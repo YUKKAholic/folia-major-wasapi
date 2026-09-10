@@ -61,27 +61,19 @@ const bufferFromAudioSrc = async (
 const resolveWasapiSource = async (
     song: SongResult,
     audioSrc: string | null,
-    allowOnline: boolean,
 ): Promise<{ source: WasapiSource; key: string; isUrl: boolean } | null> => {
-    if (isLocalPlaybackSong(song)) {
-        const filePath = await resolveLocalFilePath(song);
-        if (filePath && isAbsoluteWindowsPath(filePath)) {
-            return { source: { filePath }, key: `file:${filePath}`, isUrl: false };
-        }
-        // Folia exposes library files through a File System Access handle, so there is no OS path;
-        // hand the engine the blob the player is already using instead.
-        return bufferFromAudioSrc(audioSrc, `blob:${audioSrc}`);
+    // Online / Navidrome always play through Chromium's shared output. Routing them through the
+    // exclusive engine means downloading the whole track first, which competes with the streaming
+    // element and leaves the output silent for the whole transfer - the "online hangs, no sound"
+    // report. Only local files (real paths or renderer blobs) use exclusive mode.
+    if (!isLocalPlaybackSong(song)) return null;
+    const filePath = await resolveLocalFilePath(song);
+    if (filePath && isAbsoluteWindowsPath(filePath)) {
+        return { source: { filePath }, key: `file:${filePath}`, isUrl: false };
     }
-    if (typeof audioSrc !== 'string' || !audioSrc) return null;
-    if (/^https?:\/\//i.test(audioSrc)) {
-        if (!allowOnline) return null;
-        return { source: { url: audioSrc }, key: `url:${audioSrc}`, isUrl: true };
-    }
-    // A cached track is served as a blob URL; send its bytes when online exclusive is enabled.
-    if (allowOnline && audioSrc.startsWith('blob:')) {
-        return bufferFromAudioSrc(audioSrc, `blob:${audioSrc}`);
-    }
-    return null;
+    // Folia exposes library files through a File System Access handle, so there is no OS path;
+    // hand the engine the blob the player is already using instead.
+    return bufferFromAudioSrc(audioSrc, `blob:${audioSrc}`);
 };
 
 /** The reusable form of a source: a buffer's bytes are only sent on the first play. */
@@ -91,7 +83,6 @@ const sourceRef = (source: WasapiSource): WasapiSource =>
 export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>) => {
     const enableWasapiExclusive = useAudioSettingsStore(state => state.enableWasapiExclusive);
     const wasapiDeviceId = useAudioSettingsStore(state => state.wasapiDeviceId);
-    const enableWasapiExclusiveOnline = useAudioSettingsStore(state => state.enableWasapiExclusiveOnline);
     const currentSong = usePlaybackStore(state => state.currentSong);
     const currentSongId = currentSong?.id ?? null;
     const audioSrc = usePlaybackStore(state => state.audioSrc);
@@ -225,7 +216,7 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
         onlineSuspendedRef.current = false;
         failedSourcesRef.current = new Set();
         void wasapi.setDevice(wasapiDeviceId);
-    }, [enableWasapiExclusive, wasapiDeviceId, enableWasapiExclusiveOnline]);
+    }, [enableWasapiExclusive, wasapiDeviceId]);
 
     // Play / pause / resume routing, issued only on an actual change.
     useEffect(() => {
@@ -240,11 +231,7 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
 
         let cancelled = false;
         void (async () => {
-            const resolved = await resolveWasapiSource(
-                song,
-                audioSrc,
-                enableWasapiExclusiveOnline && !onlineSuspendedRef.current,
-            );
+            const resolved = await resolveWasapiSource(song, audioSrc);
             if (cancelled) return;
             if (!resolved) {
                 dropToSharedMode();
@@ -287,7 +274,7 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
         return () => {
             cancelled = true;
         };
-    }, [enableWasapiExclusive, wasapiDeviceId, enableWasapiExclusiveOnline, currentSongId, audioSrc, playerState, audioRef]);
+    }, [enableWasapiExclusive, wasapiDeviceId, currentSongId, audioSrc, playerState, audioRef]);
 
     // Seek mirroring: the engine restarts at the element's position whenever a seek lands.
     useEffect(() => {

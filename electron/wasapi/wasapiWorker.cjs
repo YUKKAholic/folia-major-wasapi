@@ -55,6 +55,8 @@ let playbackGeneration = 0;
  *  instead of closing and reopening it (a running exclusive stream releases slowly, and the
  *  reopen then races the release with AUDCLNT_E_DEVICE_IN_USE). */
 let openFormatKey = null;
+/** In-flight URL download, aborted when a newer playback supersedes it. */
+let activeDownload = null;
 /** Shared debug log file (main process path); best-effort. */
 let logPath = null;
 
@@ -157,6 +159,7 @@ const currentPositionMs = () => {
 const downloadToTemp = async (url) => {
     wlog(`download ${url.slice(0, 200)}`);
     const controller = new AbortController();
+    activeDownload = controller;
     const timer = setTimeout(() => controller.abort(), 60000);
     let tmp = null;
     try {
@@ -191,6 +194,7 @@ const downloadToTemp = async (url) => {
         throw error;
     } finally {
         clearTimeout(timer);
+        if (activeDownload === controller) activeDownload = null;
     }
 };
 
@@ -510,6 +514,15 @@ const runPlayback = async (msg) => {
     // A newer playback supersedes anything still in flight: stop the previous stream first.
     killFfmpeg();
     clearFeedQueue();
+    // Abort a download for a superseded track so the new one is not stuck behind it.
+    if (activeDownload) {
+        try {
+            activeDownload.abort();
+        } catch {
+            // Ignore.
+        }
+        activeDownload = null;
+    }
     try {
         await startPlayback(msg, generation);
     } catch (err) {

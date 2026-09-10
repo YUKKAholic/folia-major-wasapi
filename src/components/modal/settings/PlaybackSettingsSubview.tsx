@@ -52,13 +52,11 @@ const PlaybackSettingsSubview: React.FC<PlaybackSettingsSubviewProps> = ({
         enableTranscodeFallback,
         enableWasapiExclusive,
         wasapiDeviceId,
-        enableWasapiExclusiveOnline,
         neteaseScrobbleEnabled,
         queueAddBehavior,
         onToggleTranscodeFallback,
         onToggleWasapiExclusive,
         onSetWasapiDeviceId,
-        onToggleWasapiExclusiveOnline,
         onToggleNeteaseScrobble,
         onQueueAddBehaviorChange,
     } = useAudioSettingsStore(useShallow(state => ({
@@ -66,13 +64,11 @@ const PlaybackSettingsSubview: React.FC<PlaybackSettingsSubviewProps> = ({
         enableTranscodeFallback: state.enableTranscodeFallback,
         enableWasapiExclusive: state.enableWasapiExclusive,
         wasapiDeviceId: state.wasapiDeviceId,
-        enableWasapiExclusiveOnline: state.enableWasapiExclusiveOnline,
         neteaseScrobbleEnabled: state.neteaseScrobbleEnabled,
         queueAddBehavior: state.queueAddBehavior,
         onToggleTranscodeFallback: state.handleToggleTranscodeFallback,
         onToggleWasapiExclusive: state.handleToggleWasapiExclusive,
         onSetWasapiDeviceId: state.handleSetWasapiDeviceId,
-        onToggleWasapiExclusiveOnline: state.handleToggleWasapiExclusiveOnline,
         onToggleNeteaseScrobble: state.handleToggleNeteaseScrobble,
         onQueueAddBehaviorChange: state.handleSetQueueAddBehavior,
     })));
@@ -493,17 +489,6 @@ const PlaybackSettingsSubview: React.FC<PlaybackSettingsSubviewProps> = ({
                                             isDaylight={isDaylight}
                                             theme={theme}
                                         />
-                                    </div>
-                                    <div className="flex items-start justify-between gap-3">
-                                        <div className="space-y-1">
-                                            <div className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>
-                                                {t('options.wasapiExclusiveOnline')}
-                                            </div>
-                                            <div className="text-[11px] opacity-50 max-w-[420px]" style={{ color: 'var(--text-secondary)' }}>
-                                                {t('options.wasapiExclusiveOnlineDesc')}
-                                            </div>
-                                        </div>
-                                        {renderToggle(enableWasapiExclusiveOnline, () => onToggleWasapiExclusiveOnline(!enableWasapiExclusiveOnline))}
                                     </div>
                                 </div>
                             )}
