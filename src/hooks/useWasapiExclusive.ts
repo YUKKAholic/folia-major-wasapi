@@ -120,6 +120,10 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
      */
     const enginePositionMsRef = useRef(0);
     const engineCorrectionSecRef = useRef<number | null>(null);
+    /** When the app last (re)loaded the transport element, to tell its resets from a user seek. */
+    const elementLoadAtRef = useRef(0);
+    /** When the current source was first routed to the engine (a fresh start vs a mid-song reload). */
+    const lastRouteAtRef = useRef(0);
     /** After a failed attempt, skip exclusive for a moment so it cannot thrash. */
     const exclusiveCooldownUntilRef = useRef(0);
     /** Once an online track fails exclusive, stop trying online for the rest of the session. */
@@ -301,6 +305,7 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
                 // New source: start it and let the HTML5 play until the engine reports `started`.
                 // The full source (with bytes for a buffer) is sent once; later reuse drops them.
                 rlog(`route-new key=${key}`);
+                lastRouteAtRef.current = Date.now();
                 activeSourceRef.current = { source: sourceRef(resolved.source), key, playing: true, isUrl: resolved.isUrl };
                 void wasapi.setDevice(wasapiDeviceId);
                 armWatchdog(resolved.isUrl ? WATCHDOG_URL_MS : WATCHDOG_MS);
@@ -330,13 +335,42 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
                 return;
             }
             engineCorrectionSecRef.current = null;
+            // A seek that lands right after the app (re)loaded the element is the app restoring its
+            // own playhead (a fresh blob URL for the same song, session restore, ...), not the
+            // listener. The engine is authoritative here: pull the element back onto the engine's
+            // position instead of stopping the audio and restarting it at the app's stale value.
+            if (exclusiveActiveRef.current && Date.now() - elementLoadAtRef.current < 1200 && Date.now() - lastRouteAtRef.current > 2000) {
+                const engineSec = enginePositionMsRef.current / 1000;
+                rlog(`seeked-after-load ignored (engine ${engineSec.toFixed(3)})`);
+                if (engineSec > 0 && Math.abs(element.currentTime - engineSec) > 0.25) {
+                    engineCorrectionSecRef.current = engineSec;
+                    try {
+                        element.currentTime = engineSec;
+                    } catch {
+                        // Not seekable yet.
+                    }
+                }
+                return;
+            }
             const active = activeSourceRef.current;
             if (!active || failedSourcesRef.current.has(active.key)) return;
             armWatchdog();
             void wasapi.seek(active.source, element.currentTime);
         };
+        const markLoad = (event: Event) => {
+            elementLoadAtRef.current = Date.now();
+            rlog(`load-event ${event.type} el=${element.currentTime.toFixed(3)}`);
+        };
         element.addEventListener('seeked', onSeeked);
-        return () => element.removeEventListener('seeked', onSeeked);
+        element.addEventListener('loadedmetadata', markLoad);
+        element.addEventListener('emptied', markLoad);
+        element.addEventListener('loadstart', markLoad);
+        return () => {
+            element.removeEventListener('seeked', onSeeked);
+            element.removeEventListener('loadedmetadata', markLoad);
+            element.removeEventListener('emptied', markLoad);
+            element.removeEventListener('loadstart', markLoad);
+        };
     }, [enableWasapiExclusive, audioRef]);
 
     // Engine events: mute only while exclusive output is actually live; unmute on every exit path.
