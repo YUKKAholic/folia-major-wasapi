@@ -9,6 +9,7 @@ import { setStatusMessage } from '../stores/useStatusMessageStore';
 import { setWasapiMode, type WasapiMode } from '../stores/useWasapiStatusStore';
 import { getSongResourceCacheKey } from '../services/onlineMusic/resourceKeys';
 import { recoverAudioOutput } from '../services/audioOutputRecovery';
+import { currentTime as currentTimeSignal } from '../stores/motionSignals';
 import i18n from '../i18n/config';
 
 // src/hooks/useWasapiExclusive.ts
@@ -284,7 +285,11 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
                 if (playerState === PlayerState.PLAYING && !active.playing) {
                     active.playing = true;
                     armWatchdog();
-                    void wasapi.resume(sourceRef(active.source), audioRef.current?.currentTime ?? 0);
+                    // Resume from the engine's own position, not the stalled element's clock.
+                    const resumeSec = enginePositionMsRef.current > 0
+                        ? enginePositionMsRef.current / 1000
+                        : (audioRef.current?.currentTime ?? 0);
+                    void wasapi.resume(sourceRef(active.source), resumeSec);
                 } else if (playerState === PlayerState.PAUSED && active.playing) {
                     active.playing = false;
                     clearWatchdog();
@@ -342,14 +347,15 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
             clearWatchdog();
             if (event.type === 'position') {
                 // Exclusive output stalls Chromium's transport (its AudioContext lost the endpoint),
-                // so the element's clock - and with it the progress bar - freezes while the engine
-                // keeps playing. Snap the element back onto the engine's real position when it has
-                // drifted; the `seeked` it fires is recognised as ours and not mirrored.
+                // so the element's clock freezes. Drive the visible clock straight from the engine so
+                // the progress bar follows the audio smoothly, and only snap the element itself when
+                // it has drifted far, to keep a later resume close. The seeked that fires is ours.
                 enginePositionMsRef.current = event.positionMs;
                 const element = audioRef.current;
-                if (element && exclusiveActiveRef.current) {
+                if (exclusiveActiveRef.current) {
                     const engineSec = event.positionMs / 1000;
-                    if (Math.abs(element.currentTime - engineSec) > 1) {
+                    currentTimeSignal.set(engineSec);
+                    if (element && Math.abs(element.currentTime - engineSec) > 2) {
                         rlog(`engine-correct ${element.currentTime.toFixed(3)} -> ${engineSec.toFixed(3)} (engine ${event.positionMs.toFixed(1)})`);
                         engineCorrectionSecRef.current = engineSec;
                         try {
@@ -359,6 +365,10 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
                         }
                     }
                 }
+                return;
+            }
+            if (event.type === 'paused') {
+                enginePositionMsRef.current = event.positionMs;
                 return;
             }
             if (event.type === 'started') {
