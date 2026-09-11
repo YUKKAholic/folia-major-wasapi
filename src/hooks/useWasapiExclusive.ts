@@ -108,6 +108,14 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
     const lastModeRef = useRef<WasapiMode>('off');
     /** True while the engine has actually taken the output (muted Chromium). */
     const exclusiveActiveRef = useRef(false);
+    /**
+     * While exclusive output is live, Chromium's AudioContext loses the endpoint and the transport
+     * element's clock stalls, so the progress bar freezes (and a later resume seeks the engine back
+     * to the stale element time). We keep the element aligned to the engine's real position and
+     * remember the value we wrote so the resulting `seeked` is not mirrored back as a new play.
+     */
+    const enginePositionMsRef = useRef(0);
+    const engineCorrectionSecRef = useRef<number | null>(null);
     /** After a failed attempt, skip exclusive for a moment so it cannot thrash. */
     const exclusiveCooldownUntilRef = useRef(0);
     /** Once an online track fails exclusive, stop trying online for the rest of the session. */
@@ -303,6 +311,15 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
         if (!wasapi || !enableWasapiExclusive || !element) return;
 
         const onSeeked = () => {
+            // A seek we issued ourselves to keep the stalled element aligned with the engine's real
+            // position is not the listener moving the playhead; mirroring it back would restart
+            // playback at (almost) the same spot and cut the audio.
+            const correction = engineCorrectionSecRef.current;
+            if (correction !== null && Math.abs(element.currentTime - correction) < 0.25) {
+                engineCorrectionSecRef.current = null;
+                return;
+            }
+            engineCorrectionSecRef.current = null;
             const active = activeSourceRef.current;
             if (!active || failedSourcesRef.current.has(active.key)) return;
             armWatchdog();
@@ -318,6 +335,26 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
         if (!wasapi || !enableWasapiExclusive) return;
         return wasapi.onEvent((event) => {
             clearWatchdog();
+            if (event.type === 'position') {
+                // Exclusive output stalls Chromium's transport (its AudioContext lost the endpoint),
+                // so the element's clock - and with it the progress bar - freezes while the engine
+                // keeps playing. Snap the element back onto the engine's real position when it has
+                // drifted; the `seeked` it fires is recognised as ours and not mirrored.
+                enginePositionMsRef.current = event.positionMs;
+                const element = audioRef.current;
+                if (element && exclusiveActiveRef.current) {
+                    const engineSec = event.positionMs / 1000;
+                    if (Math.abs(element.currentTime - engineSec) > 1) {
+                        engineCorrectionSecRef.current = engineSec;
+                        try {
+                            element.currentTime = engineSec;
+                        } catch {
+                            // Not seekable yet (still loading); the next position tick retries.
+                        }
+                    }
+                }
+                return;
+            }
             if (event.type === 'started') {
                 applyMode('exclusive', true);
                 exclusiveActiveRef.current = true;
