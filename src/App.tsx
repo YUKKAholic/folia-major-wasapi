@@ -258,6 +258,10 @@ export default function App() {
         setIsUserGuideModalOpen: state.setIsUserGuideModalOpen,
     })));
     const automixEnabled = useAutomixSettingsStore(state => state.automixEnabled);
+    // Bit-perfect exclusive output must not be touched: AutoMix analyses tracks by seeking the
+    // carrier element, and every one of those seeks was mirrored to the exclusive engine as a
+    // real playhead move (heard as the song skipping ahead). Exclusive therefore disables AutoMix.
+    const enableWasapiExclusive = useAudioSettingsStore(state => state.enableWasapiExclusive);
     const transitionMode = useAutomixSettingsStore(state => state.transitionMode);
     const crossfadeMaxSec = useAutomixSettingsStore(state => state.crossfadeMaxSec);
     const transitionPerformance = useAutomixSettingsStore(state => state.transitionPerformance);
@@ -1162,7 +1166,7 @@ export default function App() {
         currentSongKeyRef: currentSongRef,
         coverUrl,
         loopMode: effectiveLoopMode,
-        isEnabled: automixEnabled && !isNowPlayingStageActive,
+        isEnabled: automixEnabled && !isNowPlayingStageActive && !enableWasapiExclusive,
         transition: transitionSettings,
         onAdvanceTrack: () => {
             // Same advance the end of a track would trigger, only early enough for the outgoing
