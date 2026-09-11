@@ -345,9 +345,12 @@ const feed = (pcm) => {
 };
 
 // Maps a source bit depth to the FFmpeg PCM encoder and the exclusive-mode output depth.
+//
+// 24-bit is rendered into a 32-bit container (24-in-32): many USB DACs only run 32-bit slots and
+// misinterpret tightly-packed 3-byte 24-bit frames, which is heard as constant static. FFmpeg's
+// pcm_s32le left-justifies the 24-bit sample in 32 bits, so no audio information is lost.
 const pickCodec = (bitsPerSample) => {
     if (bitsPerSample <= 16) return { codec: 'pcm_s16le', openBits: 16 };
-    if (bitsPerSample <= 24) return { codec: 'pcm_s24le', openBits: 24 };
     return { codec: 'pcm_s32le', openBits: 32 };
 };
 

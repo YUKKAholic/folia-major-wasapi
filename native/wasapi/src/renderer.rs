@@ -37,8 +37,12 @@ const KSDATAFORMAT_SUBTYPE_PCM: GUID =
 const KSDATAFORMAT_SUBTYPE_IEEE_FLOAT: GUID =
     GUID::from_u128(0x0000_0003_0000_0010_8000_00aa00389b71);
 
-const BUFFER_DURATION_HNS: i64 = 500_000; // 50 ms exclusive buffer
-const PERIOD_HNS: i64 = 500_000; // 50 ms event period (must equal buffer in exclusive mode)
+// Exclusive event-driven buffering: the buffer duration MUST be an integer multiple of the device
+// period, and periodicity must equal the buffer duration. A mismatched (e.g. fixed 50 ms) buffer
+// makes the driver slip samples every period, which sounds like continuous static/"electric noise".
+// We therefore query the device's own period at open time and use it directly; this is only a
+// fallback for the rare client that reports no period.
+const FALLBACK_PERIOD_HNS: i64 = 100_000; // 10 ms
 const EVENT_WAIT_TIMEOUT_MS: u32 = 100; // poll for commands while idle
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -531,12 +535,25 @@ fn open_device(
     } else {
         &wfx_plain
     };
+
+    // Exclusive event-driven buffering must be aligned to the device period; otherwise the driver
+    // slips samples every period, which is heard as continuous static ("electric noise"). Query the
+    // device's own period and use it for both buffer duration and periodicity (they must be equal).
+    let mut default_period: i64 = 0;
+    let mut min_period: i64 = 0;
+    let period_hns = match unsafe {
+        client.GetDevicePeriod(Some(&mut default_period), Some(&mut min_period))
+    } {
+        Ok(()) if default_period > 0 => default_period,
+        _ => FALLBACK_PERIOD_HNS,
+    };
+
     unsafe {
         client.Initialize(
             AUDCLNT_SHAREMODE_EXCLUSIVE,
             AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
-            BUFFER_DURATION_HNS,
-            PERIOD_HNS,
+            period_hns,
+            period_hns,
             wfx,
             None,
         )
