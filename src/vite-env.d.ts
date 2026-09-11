@@ -903,6 +903,7 @@ declare global {
         stop: () => Promise<unknown>;
         setDevice: (deviceId: string) => Promise<unknown>;
         setRendererMuted: (muted: boolean) => Promise<unknown>;
+        log?: (message: string) => void;
         onEvent: (callback: (event: WasapiEvent) => void) => () => void;
       };
     };

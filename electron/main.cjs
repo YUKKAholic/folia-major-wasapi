@@ -5521,6 +5521,16 @@ app.whenReady().then(async () => {
         }
         return true;
       });
+      ipcMain.on('wasapi-renderer-log', (_event, message) => {
+        try {
+          fs.appendFileSync(
+            path.join(app.getPath('userData'), 'wasapi-debug.log'),
+            `[${new Date().toISOString()}] renderer ${String(message)}\n`,
+          );
+        } catch {
+          // Diagnostics are best effort.
+        }
+      });
     } catch (error) {
       console.warn('[WASAPI] Failed to initialize the WASAPI engine', error);
     }

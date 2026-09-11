@@ -318,6 +318,7 @@ contextBridge.exposeInMainWorld('electron', {
         stop: () => ipcRenderer.invoke('wasapi-stop'),
         setDevice: (deviceId) => ipcRenderer.invoke('wasapi-set-device', deviceId),
         setRendererMuted: (muted) => ipcRenderer.invoke('wasapi-set-renderer-muted', muted),
+        log: (message) => ipcRenderer.send('wasapi-renderer-log', message),
         onEvent: (callback) => {
             const listener = (_event, event) => callback(event);
             ipcRenderer.on('wasapi-event', listener);

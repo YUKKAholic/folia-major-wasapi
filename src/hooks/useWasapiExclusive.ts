@@ -94,6 +94,9 @@ const sourceRef = (source: WasapiSource): WasapiSource =>
     'kind' in source && source.kind === 'buffer' ? { kind: 'buffer', name: source.name } : source;
 
 export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>) => {
+    // Diagnostics: mirrored into the worker's wasapi-debug.log so a desync can be traced from the
+    // renderer side too (who moved the transport element, and when).
+    const rlog = (message: string) => window.electron?.wasapi?.log?.(message);
     const enableWasapiExclusive = useAudioSettingsStore(state => state.enableWasapiExclusive);
     const wasapiDeviceId = useAudioSettingsStore(state => state.wasapiDeviceId);
     const currentSong = usePlaybackStore(state => state.currentSong);
@@ -292,6 +295,7 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
             if (playerState === PlayerState.PLAYING) {
                 // New source: start it and let the HTML5 play until the engine reports `started`.
                 // The full source (with bytes for a buffer) is sent once; later reuse drops them.
+                rlog(`route-new key=${key}`);
                 activeSourceRef.current = { source: sourceRef(resolved.source), key, playing: true, isUrl: resolved.isUrl };
                 void wasapi.setDevice(wasapiDeviceId);
                 armWatchdog(resolved.isUrl ? WATCHDOG_URL_MS : WATCHDOG_MS);
@@ -311,6 +315,7 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
         if (!wasapi || !enableWasapiExclusive || !element) return;
 
         const onSeeked = () => {
+            rlog(`seeked el=${element.currentTime.toFixed(3)} paused=${element.paused} ended=${element.ended} rs=${element.readyState} corr=${engineCorrectionSecRef.current ?? 'null'} src=${String(element.currentSrc || '').slice(-28)}`);
             // A seek we issued ourselves to keep the stalled element aligned with the engine's real
             // position is not the listener moving the playhead; mirroring it back would restart
             // playback at (almost) the same spot and cut the audio.
@@ -345,6 +350,7 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
                 if (element && exclusiveActiveRef.current) {
                     const engineSec = event.positionMs / 1000;
                     if (Math.abs(element.currentTime - engineSec) > 1) {
+                        rlog(`engine-correct ${element.currentTime.toFixed(3)} -> ${engineSec.toFixed(3)} (engine ${event.positionMs.toFixed(1)})`);
                         engineCorrectionSecRef.current = engineSec;
                         try {
                             element.currentTime = engineSec;
@@ -356,6 +362,7 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
                 return;
             }
             if (event.type === 'started') {
+                rlog(`engine-started pos=${event.positionMs.toFixed(1)}`);
                 applyMode('exclusive', true);
                 exclusiveActiveRef.current = true;
                 void wasapi.setRendererMuted(true);
