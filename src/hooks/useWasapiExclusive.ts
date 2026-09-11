@@ -361,6 +361,39 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
             elementLoadAtRef.current = Date.now();
             rlog(`load-event ${event.type} el=${element.currentTime.toFixed(3)}`);
         };
+        // Diagnostic: trap direct writes to currentTime and log where they came from. Bundled names
+        // are not pretty, but the frame that names the module is enough to find the caller.
+        let restoreSetter: (() => void) | null = null;
+        try {
+            const proto = Object.getPrototypeOf(element) as object;
+            const descriptor = Object.getOwnPropertyDescriptor(proto, 'currentTime')
+                ?? Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'currentTime');
+            if (descriptor && descriptor.set && descriptor.get) {
+                const originalGet = descriptor.get;
+                const originalSet = descriptor.set;
+                Object.defineProperty(element, 'currentTime', {
+                    configurable: true,
+                    get(this: HTMLMediaElement) {
+                        return originalGet.call(this);
+                    },
+                    set(this: HTMLMediaElement, value: number) {
+                        const stack = (new Error().stack || '').split('\n').slice(1, 5)
+                            .map(line => line.trim().replace(/^at\s+/, '')).join(' | ');
+                        rlog(`SET currentTime=${Number(value).toFixed(3)} :: ${stack}`);
+                        originalSet.call(this, value);
+                    },
+                });
+                restoreSetter = () => {
+                    try {
+                        delete (element as unknown as Record<string, unknown>).currentTime;
+                    } catch {
+                        // Best effort.
+                    }
+                };
+            }
+        } catch {
+            // Diagnostics only.
+        }
         element.addEventListener('seeked', onSeeked);
         element.addEventListener('loadedmetadata', markLoad);
         element.addEventListener('emptied', markLoad);
@@ -370,6 +403,7 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
             element.removeEventListener('loadedmetadata', markLoad);
             element.removeEventListener('emptied', markLoad);
             element.removeEventListener('loadstart', markLoad);
+            if (restoreSetter) restoreSetter();
         };
     }, [enableWasapiExclusive, audioRef]);
 
