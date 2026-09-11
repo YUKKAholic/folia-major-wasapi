@@ -2040,6 +2040,7 @@ export default function App() {
         return true;
     };
     const seekMainAudio = useCallback((time: number) => {
+        window.electron?.wasapi?.log?.(`seekMainAudio ${time.toFixed(3)} paused=${audioRef.current?.paused} rs=${audioRef.current?.readyState}`);
         if (seekDuringTransitionRef.current(time)) {
             return;
         }
@@ -2057,6 +2058,7 @@ export default function App() {
         if (isNowPlayingControlDisabled) {
             return;
         }
+        window.electron?.wasapi?.log?.(`lyricLineSeek ${lyricTimeSec.toFixed(3)}`);
 
         const playbackTime = Math.max(0, lyricTimeSec + currentTime.get() - lyricCurrentTime.get());
         if (activePlaybackContext === 'stage' && stageActiveEntryKind === 'lyrics' && !audioSrc) {

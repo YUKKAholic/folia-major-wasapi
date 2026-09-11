@@ -92,6 +92,7 @@ const ProgressBar: React.FC<ProgressBarProps> = ({
             return;
         }
         const val = Number(e.currentTarget.value);
+        window.electron?.wasapi?.log?.(`progress-input ${val.toFixed(3)} dragging=${isDraggingRef.current}`);
         updateUI(val, false, false, true);
         // iOS Safari bug: 点击的时候触发 pointerup 事件会早于 input 事件，导致点击失效
         // chromium：pointerdown → input → pointerup
@@ -112,6 +113,7 @@ const ProgressBar: React.FC<ProgressBarProps> = ({
     const handleSeekEnd = (e: React.PointerEvent<HTMLInputElement>) => {
         if (disabled) return;
         const value = Number(e.currentTarget.value);
+        window.electron?.wasapi?.log?.(`progress-seek-end ${value.toFixed(3)}`);
         isDraggingRef.current = false;
         updateUI(value, true);
         onSeek(value);
