@@ -261,6 +261,9 @@ const installCrashHandlers = ({ app, crashLog, isRendererCrashRecovered = () => 
     app.on('will-quit', () => { isQuitting = true; });
 
     process.on('uncaughtException', (error) => {
+        // Aborting in-flight work (download pause/cancel) makes Electron's network/stream layer
+        // surface an AbortError out of band. That is a normal way to stop a transfer, not a crash.
+        if (error && error.name === 'AbortError') return;
         crashLog.reportError('uncaughtException', error, { blocking: true });
         // Registering this handler is what suppressed Electron's own fatal error box, so the quit it
         // would have done has to be done here. Continuing on a main process whose invariants have
@@ -271,6 +274,7 @@ const installCrashHandlers = ({ app, crashLog, isRendererCrashRecovered = () => 
     // Written down but not announced: a rejected promise nobody awaited is a bug worth the evidence,
     // and the app is still running. A modal over playback for one would be out of proportion.
     process.on('unhandledRejection', (reason) => {
+        if (reason && reason.name === 'AbortError') return;
         crashLog.reportError('unhandledRejection', reason, { announceToUser: false });
     });
 

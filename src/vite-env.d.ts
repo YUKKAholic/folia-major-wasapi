@@ -541,7 +541,7 @@ declare global {
   interface ElectronDownloadProgress {
     id: string;
     name: string;
-    status: 'downloading' | 'done' | 'error' | 'canceled';
+    status: 'downloading' | 'paused' | 'done' | 'error' | 'canceled';
     received: number;
     total: number;
     error?: string;
@@ -550,6 +550,8 @@ declare global {
 
   interface ElectronDownloadStartRequest {
     id: string;
+    /** Stable song identity so a repeat download can be recognised and skipped. */
+    songId?: string;
     /** Remote URL to fetch, or omit when copying an existing local file. */
     url?: string;
     /** Existing local file to copy into the download folder. */
@@ -567,6 +569,31 @@ declare global {
     name?: string;
     error?: string;
     canceled?: boolean;
+    /** True when the song was already on disk and no transfer was performed. */
+    skipped?: boolean;
+    /** True when the transfer was paused (its partial file is kept for a later resume). */
+    paused?: boolean;
+  }
+
+  /** Result of deleting a song's local file(s). */
+  interface ElectronDeleteLocalAudioResult {
+    ok: boolean;
+    removed: string[];
+    failed: string[];
+  }
+
+  /** One song still queued from a previous session, persisted so a download can be continued. */
+  interface ElectronDownloadQueueEntry {
+    id: string;
+    songId: string;
+    name: string;
+    status: string;
+    error?: string;
+    path?: string;
+    fileName?: string;
+    /** The SongResult payload, replayed when the queue is resumed. */
+    song?: unknown;
+    quality?: string;
   }
 
   interface ElectronDownloadDirectoryResult {
@@ -763,7 +790,13 @@ declare global {
         resetDirectory: () => Promise<ElectronDownloadDirectoryResult>;
         openDirectory: () => Promise<{ ok: boolean; directory?: string; error?: string }>;
         start: (request: ElectronDownloadStartRequest) => Promise<ElectronDownloadStartResult>;
-        cancel: (id: string) => Promise<boolean>;
+        cancel: (id: string, fileName?: string) => Promise<boolean>;
+        pause: (id: string) => Promise<boolean>;
+        pauseAll: () => Promise<number>;
+        checkDownloaded: (songIds: string[]) => Promise<Record<string, { path: string; name: string } | null>>;
+        deleteLocalAudio: (payload: { songId?: string; cacheKey?: string; filePath?: string }) => Promise<ElectronDeleteLocalAudioResult>;
+        getQueue: () => Promise<ElectronDownloadQueueEntry[]>;
+        saveQueue: (queue: ElectronDownloadQueueEntry[]) => Promise<boolean>;
         onProgress: (callback: (progress: ElectronDownloadProgress) => void) => () => void;
       };
       requestTranscodeFallback?: (request: import('./types/playbackRecovery').TranscodeFallbackRequest) => Promise<import('./types/playbackRecovery').TranscodeFallbackResult>;

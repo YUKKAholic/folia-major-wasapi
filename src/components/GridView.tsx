@@ -1,6 +1,6 @@
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, useMotionValue, animate, AnimatePresence, useDragControls } from 'framer-motion';
-import { ChevronLeft, Disc, Download, Play, Plus, Loader2, Heart, ListPlus, Pencil, RefreshCw, Trash2, Star, Tags } from 'lucide-react';
+import { ChevronLeft, Disc, Download, Play, Plus, Loader2, Heart, ListPlus, Pencil, RefreshCw, Trash2, Star, Tags, Check } from 'lucide-react';
 import GridPanelToggleIndicator from './folia-grid/GridPanelToggleIndicator';
 import SongDownloadDialog from './download/SongDownloadDialog';
 import { useTranslation } from 'react-i18next';
@@ -48,6 +48,7 @@ import { useGridSurfaceRegistration } from '../hooks/useGridSurfaceRegistration'
 import type { MediaId, ProviderCollection } from '../types/onlineMusic';
 import { useSidePanelBottomPx } from '../hooks/usePlayerBottomBarBottomPx';
 import { useGridViewSettingsStore } from '../stores/useGridViewSettingsStore';
+import { deleteLocalAudioForSong } from '../services/localFileDeletion';
 
 export interface GridViewSourceActions {
     local?: {
@@ -398,6 +399,9 @@ export const GridView: React.FC<GridViewProps> = ({
     const [isCreatePlaylistOpen, setIsCreatePlaylistOpen] = useState(false);
     const [isDeleteFolderOpen, setIsDeleteFolderOpen] = useState(false);
     const [isDownloadPickerOpen, setIsDownloadPickerOpen] = useState(false);
+    // Pending removal from a playlist: the song/track awaiting the "delete local file too?" choice.
+    const [pendingRemoval, setPendingRemoval] = useState<{ track: SongResult; trackIndex: number; trackKey: string } | null>(null);
+    const [removeLocalFileChecked, setRemoveLocalFileChecked] = useState(true);
     const [showCutInPanel, setShowCutInPanel] = useState(false);
     const [showSidePanel, setShowSidePanel] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
@@ -1035,7 +1039,7 @@ export const GridView: React.FC<GridViewProps> = ({
         }
     }, [isDailyRecommendationsCollection]);
 
-    const handleRemoveTrack = useCallback(async (track: SongResult, trackIndex: number, trackKey: string) => {
+    const performRemoveTrack = useCallback(async (track: SongResult, trackIndex: number, trackKey: string, deleteLocalFile: boolean) => {
         if (!collection) return;
         if (trackRemovalTimeoutsRef.current.has(trackKey)) return;
         try {
@@ -1079,6 +1083,7 @@ export const GridView: React.FC<GridViewProps> = ({
             }
 
             if (isLocalPlaylistCollection && collection.playlistId && sourceActions?.local?.onRemovePlaylistSongs) {
+                if (deleteLocalFile) await deleteLocalAudioForSong(track);
                 const localSongId = (track as UnifiedSong).localRef?.songId || String(track.id);
                 await sourceActions.local.onRemovePlaylistSongs(collection.playlistId, [localSongId]);
                 commitAfterTrackRemovalAnimation(trackKey, () => {
@@ -1090,6 +1095,7 @@ export const GridView: React.FC<GridViewProps> = ({
             }
 
             if (isNavidromePlaylistCollection && sourceActions?.navidrome?.onRemovePlaylistSongs) {
+                if (deleteLocalFile) await deleteLocalAudioForSong(track);
                 await sourceActions.navidrome.onRemovePlaylistSongs(String(collection.id), [trackIndex]);
                 commitAfterTrackRemovalAnimation(trackKey, () => {
                     const playbackKey = getPlaybackSongKey(track);
@@ -1104,6 +1110,7 @@ export const GridView: React.FC<GridViewProps> = ({
             } else {
                 await omni.updateCollectionTracks(collection, 'del', [track]);
             }
+            if (deleteLocalFile) await deleteLocalAudioForSong(track);
             const songPlaybackKey = getPlaybackSongKey(track);
             const nextTracks = tracks.filter(candidate => getPlaybackSongKey(candidate) !== songPlaybackKey);
             commitAfterTrackRemovalAnimation(trackKey, () => setTracks(nextTracks));
@@ -1134,6 +1141,17 @@ export const GridView: React.FC<GridViewProps> = ({
         t,
         tracks,
     ]);
+
+    // Removing a song from a playlist asks whether its local file should go too (default yes).
+    // Daily recommendations are a dislike, not a playlist edit, so they remove straight away.
+    const handleRemoveTrack = useCallback(async (track: SongResult, trackIndex: number, trackKey: string) => {
+        if (isDailyRecommendationsCollection) {
+            await performRemoveTrack(track, trackIndex, trackKey, false);
+            return;
+        }
+        setRemoveLocalFileChecked(true);
+        setPendingRemoval({ track, trackIndex, trackKey });
+    }, [isDailyRecommendationsCollection, performRemoveTrack]);
 
     // Build the grid spiral coordinates mapping using responsive spacing
     const allGridItems = useMemo((): GridItem[] => {
@@ -2311,6 +2329,53 @@ export const GridView: React.FC<GridViewProps> = ({
                     void handleDeleteSourceCollection();
                 }}
                 onClose={() => setIsDeleteFolderOpen(false)}
+                isDaylight={isDaylight}
+            />
+            <ConfirmDialog
+                isOpen={pendingRemoval !== null}
+                title={t('localMusic.removeFromPlaylist')}
+                description={(
+                    <div className="space-y-2">
+                        {pendingRemoval && (
+                            <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                                {formatSongName(pendingRemoval.track)}
+                            </p>
+                        )}
+                        <button
+                            type="button"
+                            onClick={() => setRemoveLocalFileChecked(previous => !previous)}
+                            className={`flex w-full items-start gap-3 rounded-2xl border px-4 py-3 text-left transition-colors ${isDaylight ? 'border-black/10 bg-black/[0.03] hover:bg-black/[0.06]' : 'border-white/10 bg-white/[0.04] hover:bg-white/[0.08]'}`}
+                        >
+                            <span
+                                className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border"
+                                style={{
+                                    borderColor: 'var(--border-primary, rgba(255,255,255,0.3))',
+                                    backgroundColor: removeLocalFileChecked ? 'var(--text-primary)' : 'transparent',
+                                }}
+                            >
+                                {removeLocalFileChecked && <Check size={11} color="var(--bg-color)" strokeWidth={3} />}
+                            </span>
+                            <span className="min-w-0">
+                                <span className="block text-sm" style={{ color: 'var(--text-primary)' }}>
+                                    {t('localMusic.deleteLocalFile')}
+                                </span>
+                                <span className="mt-0.5 block text-xs" style={{ color: 'var(--text-secondary)' }}>
+                                    {t('localMusic.deleteLocalFileDesc')}
+                                </span>
+                            </span>
+                        </button>
+                    </div>
+                )}
+                confirmText={t('localMusic.removeFromPlaylistConfirm')}
+                confirmVariant="danger"
+                onConfirm={() => {
+                    const pending = pendingRemoval;
+                    setPendingRemoval(null);
+                    if (pending) {
+                        void performRemoveTrack(pending.track, pending.trackIndex, pending.trackKey, removeLocalFileChecked);
+                    }
+                }}
+                onClose={() => setPendingRemoval(null)}
                 isDaylight={isDaylight}
             />
 

@@ -2476,6 +2476,10 @@ export default {
     "grantPermission": "点击恢复",
     "chooseCover": "选择封面图片",
     "addToPlaylist": "添加到歌单",
+    "removeFromPlaylist": "从歌单移除",
+    "removeFromPlaylistConfirm": "移除",
+    "deleteLocalFile": "同时删除本地文件",
+    "deleteLocalFileDesc": "删除该歌曲已下载/本地的音频文件，无法恢复",
     "saveQueueAsPlaylist": "保存为歌单",
     "createPlaylist": "新建歌单",
     "enterPlaylistName": "输入歌单名称",
@@ -2856,6 +2860,14 @@ export default {
     "openFolder": "打开文件夹",
     "clearFinished": "清除已完成",
     "hide": "最小化",
-    "unavailable": "无法下载"
+    "unavailable": "无法下载",
+    "continue": "继续下载",
+    "pendingCount": "{{count}} 个待下载",
+    "queued": "等待中",
+    "remove": "移除",
+    "pause": "暂停",
+    "resume": "继续",
+    "pauseAll": "全部暂停",
+    "paused": "已暂停"
   }
 } as const;

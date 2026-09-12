@@ -2409,6 +2409,10 @@ export default {
     "grantPermission": "Pulihkan",
     "chooseCover": "Pilih Gambar Sampul",
     "addToPlaylist": "Tambahkan ke Playlist",
+    "removeFromPlaylist": "Hapus dari playlist",
+    "removeFromPlaylistConfirm": "Hapus",
+    "deleteLocalFile": "Sekaligus hapus file lokalnya",
+    "deleteLocalFileDesc": "Menghapus file audio lokal/terunduh lagu ini. Tidak dapat dibatalkan.",
     "saveQueueAsPlaylist": "Simpan sebagai Playlist",
     "createPlaylist": "Buat Playlist",
     "enterPlaylistName": "Masukkan nama playlist",
@@ -2789,6 +2793,14 @@ export default {
     "openFolder": "Buka folder",
     "clearFinished": "Hapus selesai",
     "hide": "Kecilkan",
-    "unavailable": "Tidak tersedia untuk diunduh"
+    "unavailable": "Tidak tersedia untuk diunduh",
+    "continue": "Lanjutkan unduhan",
+    "pendingCount": "{{count}} menunggu",
+    "queued": "Dalam antrean",
+    "remove": "Hapus",
+    "pause": "Jeda",
+    "resume": "Lanjutkan",
+    "pauseAll": "Jeda semua",
+    "paused": "Dijeda"
   }
 } as const;

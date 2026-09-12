@@ -2477,6 +2477,10 @@ export default {
     "grantPermission": "Restore",
     "chooseCover": "Choose Cover Image",
     "addToPlaylist": "Add to Playlist",
+    "removeFromPlaylist": "Remove from playlist",
+    "removeFromPlaylistConfirm": "Remove",
+    "deleteLocalFile": "Also delete the local file",
+    "deleteLocalFileDesc": "Deletes this song's downloaded/local audio file. This cannot be undone.",
     "saveQueueAsPlaylist": "Save as Playlist",
     "createPlaylist": "Create Playlist",
     "enterPlaylistName": "Enter playlist name",
@@ -2857,6 +2861,14 @@ export default {
     "openFolder": "Open folder",
     "clearFinished": "Clear finished",
     "hide": "Minimize",
-    "unavailable": "Not available for download"
+    "unavailable": "Not available for download",
+    "continue": "Continue download",
+    "pendingCount": "{{count}} pending",
+    "queued": "Queued",
+    "remove": "Remove",
+    "pause": "Pause",
+    "resume": "Resume",
+    "pauseAll": "Pause all",
+    "paused": "Paused"
   }
 } as const;

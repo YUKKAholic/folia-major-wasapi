@@ -14,6 +14,7 @@ import PlayerPanel from './components/app/PlayerPanel';
 import ThemeQuickEditorHost from './components/panelTab/ThemeQuickEditor';
 import AppDialogs from './components/app/dialogs/AppDialogs';
 import DownloadProgressWindow from './components/download/DownloadProgressWindow';
+import { initDownloadQueue } from './services/songDownloadService';
 import { useSettingsDialogModel } from './components/app/dialogs/useSettingsDialogModel';
 import AppOverlays from './components/app/overlays/AppOverlays';
 import AutomixModelReminder from './components/modal/AutomixModelReminder';
@@ -145,6 +146,8 @@ import { useThemeQuickEditorContext } from './hooks/useThemeQuickEditorContext';
 import { usePlayerBottomBarOffset } from './hooks/usePlayerBottomBarOffset';
 import { usePlayerBottomBarPositioningEntry } from './hooks/usePlayerBottomBarPositioningEntry';
 import { PlayerBottomBarLayoutContext } from './components/floating-player/PlayerBottomBarLayoutContext';
+import { useWasapiStatusStore } from './stores/useWasapiStatusStore';
+import { markUserSeek } from './services/exclusiveSeekSignal';
 
 const LOCAL_MUSIC_UPDATED_EVENT = 'folia-local-music-updated';
 const DEV_DEBUG_SHORTCUT_LABEL = 'Alt+Shift+D';
@@ -153,6 +156,13 @@ const ONLINE_AUDIO_URL_REFRESH_BUFFER_MS = 60 * 1000;
 const LOCAL_TAIL_DECODE_ERROR_TOLERANCE_SEC = 3;
 /** How many seconds before a track ends the now playing card previews the queue's next track. */
 const NEXT_UP_LEAD_SEC = 5;
+
+/**
+ * While the exclusive renderer holds the endpoint, Chromium's transport clock is frozen and only
+ * the engine's position is real. The element's own events would drag the visible clock back to a
+ * stale value, so they are ignored and the clock is driven from the engine instead.
+ */
+const isExclusiveOutput = () => useWasapiStatusStore.getState().mode === 'exclusive';
 
 export default function App() {
     countRender('App');
@@ -361,6 +371,11 @@ export default function App() {
         currentOnlineAudioUrlFetchedAtRef,
     } = usePlaybackRuntimeRefs();
     useWasapiExclusive(audioRef);
+    // Restore any unfinished download queue from a previous session, so the download window can
+    // offer to continue it after a restart.
+    useEffect(() => {
+        void initDownloadQueue();
+    }, []);
     // The automix decks are set up much further down, but a few reset paths declared above here
     // need to be able to stop a transition, and queue navigation needs the track being SHOWN. A ref
     // keeps both reachable without reordering them; it is reassigned on every render, so the
@@ -2041,6 +2056,7 @@ export default function App() {
     };
     const seekMainAudio = useCallback((time: number) => {
         window.electron?.wasapi?.log?.(`seekMainAudio ${time.toFixed(3)} paused=${audioRef.current?.paused} rs=${audioRef.current?.readyState}`);
+        markUserSeek();
         if (seekDuringTransitionRef.current(time)) {
             return;
         }
@@ -2397,13 +2413,13 @@ export default function App() {
                 // The same split onTimeUpdate, onSeeked and onLoadedMetadata all make, and the two
                 // handlers that were missing it: while the picture is held this deck is the track
                 // ARRIVING, so its position belongs to a song whose title nobody can see yet.
-                if (!isShowingTail) currentTime.set(e.currentTarget.currentTime);
+                if (!isShowingTail && !isExclusiveOutput()) currentTime.set(e.currentTarget.currentTime);
                 setPlayerState(PlayerState.PLAYING);
             }}
             onPlaying={(e) => {
                 if (!automix.isActiveDeck(e.currentTarget)) return;
                 shouldAutoPlay.current = false;
-                if (!isShowingTail) currentTime.set(e.currentTarget.currentTime);
+                if (!isShowingTail && !isExclusiveOutput()) currentTime.set(e.currentTarget.currentTime);
                 setupAudioAnalyzer();
                 playbackAutoSkipCountRef.current = 0;
                 // The source plays, so a later TTL refresh of the same media is legitimate again.
@@ -2436,7 +2452,7 @@ export default function App() {
                 // the title of yet, and left on it the bar jumps to zero the moment a blend arms.
                 // Only two decks exist and both render this handler, so "not active" is the tail.
                 if (isShowingTail ? !isActive : isActive) {
-                    if (!audioElement.paused && !audioElement.ended) currentTime.set(audioElement.currentTime);
+                    if (!audioElement.paused && !audioElement.ended && !isExclusiveOutput()) currentTime.set(audioElement.currentTime);
                 }
                 // Everything below stays on the active deck whatever the picture is doing: player
                 // state describes what the app is playing, and the transition check has to read
@@ -2456,7 +2472,7 @@ export default function App() {
                 // Same split as onTimeUpdate: whichever deck the bar is showing is the one a seek
                 // on it has to be reflected from.
                 const isActive = automix.isActiveDeck(e.currentTarget);
-                if (isShowingTail ? !isActive : isActive) currentTime.set(e.currentTarget.currentTime);
+                if ((isShowingTail ? !isActive : isActive) && !isExclusiveOutput()) currentTime.set(e.currentTarget.currentTime);
             }}
             // Buffer progress debug helper. Uncomment to inspect how much of
             // the current source the browser has actually buffered.
@@ -2519,12 +2535,12 @@ export default function App() {
                         : pendingResumeTime;
                     const nextTime = Math.min(pendingResumeTime, safeDuration);
                     audioElement.currentTime = nextTime;
-                    currentTime.set(nextTime);
+                    if (!isExclusiveOutput()) currentTime.set(nextTime);
                     pendingResumeTimeRef.current = null;
                     return;
                 }
 
-                currentTime.set(0); // Ensure currentTime is reset when new audio loads
+                if (!isExclusiveOutput()) currentTime.set(0); // Ensure currentTime is reset when new audio loads
             }}
             onError={(e) => {
                 const audioElement = e.currentTarget;

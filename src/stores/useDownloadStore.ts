@@ -3,8 +3,10 @@
 // and any other surface can render them without knowing about the download pipeline.
 
 import { create } from 'zustand';
+import type { SongResult } from '../types';
+import type { AudioQualityPreference } from '../types/onlineMusic';
 
-export type DownloadStatus = 'resolving' | 'downloading' | 'done' | 'error' | 'canceled';
+export type DownloadStatus = 'queued' | 'resolving' | 'downloading' | 'paused' | 'done' | 'error' | 'canceled';
 
 export interface DownloadItem {
     id: string;
@@ -16,6 +18,11 @@ export interface DownloadItem {
     total: number;
     error?: string;
     path?: string;
+    /** Resolved target file name (kept so a paused transfer's ".part" can be resumed/discarded). */
+    fileName?: string;
+    /** Kept so a queued item can be resumed (and re-resolved) after a restart. */
+    song?: SongResult;
+    quality?: AudioQualityPreference;
 }
 
 type DownloadState = {
@@ -44,7 +51,12 @@ export const useDownloadStore = create<DownloadState>((set) => ({
     })),
     removeItem: (id) => set((state) => ({ items: state.items.filter((item) => item.id !== id) })),
     clearFinished: () => set((state) => ({
-        items: state.items.filter((item) => item.status === 'resolving' || item.status === 'downloading'),
+        items: state.items.filter((item) => (
+            item.status === 'queued'
+            || item.status === 'resolving'
+            || item.status === 'downloading'
+            || item.status === 'paused'
+        )),
     })),
     setVisible: (visible) => set({ visible }),
 }));

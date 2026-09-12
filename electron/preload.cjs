@@ -117,7 +117,13 @@ contextBridge.exposeInMainWorld('electron', {
         resetDirectory: () => ipcRenderer.invoke('reset-download-directory'),
         openDirectory: () => ipcRenderer.invoke('download-open-directory'),
         start: (payload) => ipcRenderer.invoke('download-start', payload),
-        cancel: (id) => ipcRenderer.invoke('download-cancel', id),
+        cancel: (id, fileName) => ipcRenderer.invoke('download-cancel', id, fileName),
+        pause: (id) => ipcRenderer.invoke('download-pause', id),
+        pauseAll: () => ipcRenderer.invoke('download-pause-all'),
+        checkDownloaded: (songIds) => ipcRenderer.invoke('download-check', songIds),
+        deleteLocalAudio: (payload) => ipcRenderer.invoke('delete-local-audio', payload),
+        getQueue: () => ipcRenderer.invoke('download-queue-get'),
+        saveQueue: (queue) => ipcRenderer.invoke('download-queue-set', queue),
         onProgress: (callback) => {
             const listener = (_event, progress) => callback(progress);
             ipcRenderer.on('download-progress', listener);
