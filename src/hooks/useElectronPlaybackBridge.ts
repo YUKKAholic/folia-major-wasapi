@@ -28,6 +28,8 @@ import { useAppChromeStore } from '../stores/useAppChromeStore';
 import { useThemeSettingsStore } from '../stores/useThemeSettingsStore';
 import { usePlayerChromeSettingsStore } from '../stores/usePlayerChromeSettingsStore';
 import { currentTime } from '../stores/motionSignals';
+import { useWasapiStatusStore } from '../stores/useWasapiStatusStore';
+import { markUserSeek } from '../services/exclusiveSeekSignal';
 
 // Bridges Electron-specific shell features without coupling to UI components.
 const DISCORD_PRESENCE_SNAPSHOT_INTERVAL_MS = 1000;
@@ -230,7 +232,14 @@ export const useElectronPlaybackBridge = ({
         // position here would show the outgoing song's title against the incoming song's clock.
         const audioElement = getDisplayAudioElement?.() ?? audioRef.current;
         const isCurrentAudioSource = isAudioElementUsingCurrentSource();
-        const currentTimeSec = audioElement?.currentTime ?? currentTime.get();
+        // Under WASAPI exclusive output the element's clock is frozen (the endpoint was taken from
+        // Chromium), so a snapshot taken from it keeps resetting the remote window's interpolated
+        // clock to a stale value - the lyrics there flicker back and forth. The engine-driven
+        // `currentTime` motion value is the clock the UI already shows, so trust it in that mode.
+        const isExclusiveOutput = useWasapiStatusStore.getState().mode === 'exclusive';
+        const currentTimeSec = isExclusiveOutput
+            ? currentTime.get()
+            : (audioElement?.currentTime ?? currentTime.get());
         const stagePositionSec = resolveStagePlayerPositionSec({
             activePlaybackContext,
             isExternalPlaybackSourceActive: isNowPlayingStageActive,
@@ -622,6 +631,7 @@ export const useElectronPlaybackBridge = ({
                 if (onRemoteTransitionSeek?.(nextTime)) {
                     // Handled: the re-play seeks the deck itself once it reloads.
                 } else if (audioElement) {
+                    markUserSeek();
                     audioElement.currentTime = nextTime;
                 } else if (activePlaybackContext === 'stage') {
                     syncStageLyricsClock?.(nextTime, duration, taskbarPlayerStateRef.current);
@@ -694,6 +704,7 @@ export const useElectronPlaybackBridge = ({
                     if (onRemoteTransitionSeek?.(nextTime)) {
                         // Handled: that path seeks the deck it kept.
                     } else if (audioRef.current) {
+                        markUserSeek();
                         audioRef.current.currentTime = nextTime;
                     } else if (activePlaybackContext === 'stage') {
                         syncStageLyricsClock?.(nextTime, duration, taskbarPlayerStateRef.current);

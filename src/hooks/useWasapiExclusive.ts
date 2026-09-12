@@ -9,6 +9,8 @@ import { setStatusMessage } from '../stores/useStatusMessageStore';
 import { setWasapiMode, type WasapiMode } from '../stores/useWasapiStatusStore';
 import { getSongResourceCacheKey } from '../services/onlineMusic/resourceKeys';
 import { recoverAudioOutput } from '../services/audioOutputRecovery';
+import { clearExclusiveClock, setExclusiveClock } from '../services/exclusiveClock';
+import { consumeUserSeek } from '../services/exclusiveSeekSignal';
 import { currentTime as currentTimeSignal } from '../stores/motionSignals';
 import i18n from '../i18n/config';
 
@@ -215,6 +217,7 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
     const dropToSharedMode = () => {
         const hadEngine = activeSourceRef.current !== null || exclusiveActiveRef.current;
         activeSourceRef.current = null;
+        clearExclusiveClock();
         applyMode('shared');
         // Release the engine and unmute now; the worker's `stopped` event rebuilds Chromium's
         // output once the endpoint is actually free. Skip the stop when the engine never took the
@@ -234,6 +237,7 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
             applyMode('shared');
         } else {
             clearWatchdog();
+            clearExclusiveClock();
             void wasapi.stop();
             activeSourceRef.current = null;
             exclusiveActiveRef.current = false;
@@ -242,6 +246,7 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
         }
         return () => {
             clearWatchdog();
+            clearExclusiveClock();
             void wasapi.stop();
             exclusiveActiveRef.current = false;
             restoreChromiumOutput(false);
@@ -339,13 +344,13 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
                 return;
             }
             engineCorrectionSecRef.current = null;
-            // A seek that lands right after the app (re)loaded the element is the app restoring its
-            // own playhead (a fresh blob URL for the same song, session restore, ...), not the
-            // listener. The engine is authoritative here: pull the element back onto the engine's
-            // position instead of stopping the audio and restarting it at the app's stale value.
-            if (exclusiveActiveRef.current && Date.now() - elementLoadAtRef.current < 1200 && Date.now() - lastRouteAtRef.current > 2000) {
+            // Only a seek a user asked for (progress bar, keyboard, lyrics, remote) reaches the
+            // engine. The app also fires `seeked` when it reloads the element for the same song;
+            // mirroring that would restart playback at the app's stale position. Those are ignored
+            // and the element is pulled back onto the engine's position instead.
+            if (exclusiveActiveRef.current && !consumeUserSeek()) {
                 const engineSec = enginePositionMsRef.current / 1000;
-                rlog(`seeked-after-load ignored (engine ${engineSec.toFixed(3)})`);
+                rlog(`seeked-not-user ignored (engine ${engineSec.toFixed(3)})`);
                 if (engineSec > 0 && Math.abs(element.currentTime - engineSec) > 0.25) {
                     engineCorrectionSecRef.current = engineSec;
                     try {
@@ -358,6 +363,9 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
             }
             const active = activeSourceRef.current;
             if (!active || failedSourcesRef.current.has(active.key)) return;
+            // Remember the seek target now: a `play` right after a seek (the app seeks and resumes)
+            // would otherwise resume from the pre-seek engine position and undo the seek.
+            enginePositionMsRef.current = element.currentTime * 1000;
             armWatchdog();
             void wasapi.seek(active.source, element.currentTime);
         };
@@ -392,6 +400,7 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
                 const element = audioRef.current;
                 if (exclusiveActiveRef.current) {
                     const engineSec = event.positionMs / 1000;
+                    setExclusiveClock(engineSec);
                     currentTimeSignal.set(engineSec);
                     if (element && Math.abs(element.currentTime - engineSec) > 2) {
                         rlog(`engine-correct ${element.currentTime.toFixed(3)} -> ${engineSec.toFixed(3)} (engine ${event.positionMs.toFixed(1)})`);
@@ -407,10 +416,14 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
             }
             if (event.type === 'paused') {
                 enginePositionMsRef.current = event.positionMs;
+                clearExclusiveClock();
                 return;
             }
             if (event.type === 'started') {
                 rlog(`engine-started pos=${event.positionMs.toFixed(1)}`);
+                enginePositionMsRef.current = event.positionMs;
+                setExclusiveClock(event.positionMs / 1000);
+                currentTimeSignal.set(event.positionMs / 1000);
                 applyMode('exclusive', true);
                 exclusiveActiveRef.current = true;
                 void wasapi.setRendererMuted(true);
@@ -452,17 +465,21 @@ export const useWasapiExclusive = (audioRef: RefObject<HTMLAudioElement | null>)
             }
             if (event.type === 'ended') {
                 // The queue continues on the same exclusive stream (the worker kept the endpoint
-                // open for reuse); leave the output as it is.
+                // open for reuse); leave the output as it is, but hold the clock until the next
+                // `started` so the bar does not run on while nothing sounds.
+                clearExclusiveClock();
                 return;
             }
             if (event.type === 'stopped') {
                 // Engine released the endpoint; let the transport be audible again.
+                clearExclusiveClock();
                 applyMode('shared');
                 restoreChromiumOutput(true);
                 return;
             }
             if (event.type === 'error') {
                 // Any engine-level failure means exclusive output is not live; let shared mode sound.
+                clearExclusiveClock();
                 applyMode('shared', true);
                 restoreChromiumOutput(true);
                 if (lastMessageRef.current === event.message) return;

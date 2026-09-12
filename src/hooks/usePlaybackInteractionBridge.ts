@@ -14,6 +14,7 @@ import { setIsPanelOpen, useAppViewStore } from '../stores/useAppViewStore';
 import { setIsDevDebugOverlayVisible, setIsMemoryMonitorVisible } from '../stores/useAppChromeStore';
 import { useAudioSettingsStore } from '../stores/useAudioSettingsStore';
 import { currentTime } from '../stores/motionSignals';
+import { markUserSeek } from '../services/exclusiveSeekSignal';
 
 // src/hooks/usePlaybackInteractionBridge.ts
 
@@ -290,6 +291,7 @@ export function usePlaybackInteractionBridge({
                         // by the deck on screen, which is the track this key is meant to move.
                         const nextTime = Math.max(0, currentTime.get() - 5);
                         if (!seekDuringTransition?.(nextTime) && audioRef.current) {
+                            markUserSeek();
                             audioRef.current.currentTime = nextTime;
                         }
                     }
@@ -326,6 +328,7 @@ export function usePlaybackInteractionBridge({
                         // position against it lands past its end.
                         const nextTime = Math.min(duration || 0, currentTime.get() + 5);
                         if (!seekDuringTransition?.(nextTime) && audioRef.current) {
+                            markUserSeek();
                             audioRef.current.currentTime = nextTime;
                         }
                     }

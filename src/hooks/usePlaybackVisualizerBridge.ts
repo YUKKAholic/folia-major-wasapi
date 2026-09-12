@@ -7,6 +7,7 @@ import type { AudioBands, LyricData } from '../types';
 import { setCurrentLineIndex, setPlayerState } from '../stores/usePlaybackStore';
 import { selectDisplayLyrics, usePlaybackStore } from '../stores/usePlaybackStore';
 import { audioBands, audioPower, currentTime, lyricCurrentTime } from '../stores/motionSignals';
+import { getExclusiveClockSec, isExclusiveClockRunning } from '../services/exclusiveClock';
 
 // src/hooks/usePlaybackVisualizerBridge.ts
 
@@ -131,7 +132,12 @@ export function usePlaybackVisualizerBridge({
         }
 
         if (isActuallyPlaying && audioElement) {
-            const time = audioElement.currentTime;
+            // In exclusive mode the element's clock is frozen (the endpoint was taken from Chromium),
+            // so `audioElement.currentTime` sits still while the engine keeps playing. Follow the
+            // engine's interpolated clock instead, or the bar and karaoke would only move when the
+            // element is occasionally snapped back onto the engine position.
+            const exclusive = isExclusiveClockRunning();
+            const time = exclusive ? getExclusiveClockSec() : audioElement.currentTime;
             currentTime.set(time);
 
             const effectiveLyricTime = time - lyricTimelineOffsetMs / 1000;
