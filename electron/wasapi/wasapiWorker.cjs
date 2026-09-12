@@ -103,6 +103,7 @@ const killFfmpeg = () => {
         }
         ffmpeg = null;
     }
+    ffmpegPaused = false;
 };
 
 const cleanupTemp = () => {
@@ -294,7 +295,34 @@ const findWavDataOffset = (buf) => {
 let feedQueue = [];
 let feedQueuedBytes = 0;
 let feedScheduled = false;
+// FFmpeg decodes far faster than real time, so without backpressure it fills this queue with the
+// whole track in a second or two. The old cap silently dropped the OLDEST queued PCM - the bytes
+// about to be played - which skips the audio forward (a 24-bit track decodes to over the old 64 MiB
+// cap and jumped ~a minute; 16-bit stayed under it). Instead, pause FFmpeg's stdout when the queue
+// runs ahead and resume it once the ring has drained, so no audio is ever discarded.
+const FEED_HIGH_WATER_BYTES = 4 * 1024 * 1024;
+const FEED_LOW_WATER_BYTES = 1024 * 1024;
 const MAX_FEED_QUEUE_BYTES = 64 * 1024 * 1024;
+let ffmpegPaused = false;
+
+const pauseDecodeFeed = () => {
+    if (ffmpegPaused) return;
+    const stdout = ffmpeg && ffmpeg.stdout;
+    if (stdout && !stdout.destroyed) {
+        stdout.pause();
+        ffmpegPaused = true;
+        wlog(`feed backpressure pause queued=${feedQueuedBytes}`);
+    }
+};
+
+const resumeDecodeFeed = () => {
+    if (!ffmpegPaused) return;
+    ffmpegPaused = false;
+    const stdout = ffmpeg && ffmpeg.stdout;
+    if (stdout && !stdout.destroyed) {
+        stdout.resume();
+    }
+};
 
 const clearFeedQueue = () => {
     feedQueue = [];
@@ -325,6 +353,9 @@ const drainFeed = () => {
         feedQueue.shift();
         feedQueuedBytes -= head.length;
     }
+    if (feedQueuedBytes <= FEED_LOW_WATER_BYTES) {
+        resumeDecodeFeed();
+    }
     if (feedQueue.length > 0) {
         // Ring still full; try again shortly without blocking.
         setTimeout(scheduleDrain, 15);
@@ -336,10 +367,13 @@ const feed = (pcm) => {
     if (!renderer || !playing || pcm.length === 0) return;
     feedQueue.push(pcm);
     feedQueuedBytes += pcm.length;
-    // Bound memory if the consumer stops draining.
+    // Safety net only; backpressure below keeps the queue around the high-water mark.
     while (feedQueuedBytes > MAX_FEED_QUEUE_BYTES && feedQueue.length > 1) {
         const dropped = feedQueue.shift();
         feedQueuedBytes -= dropped.length;
+    }
+    if (feedQueuedBytes >= FEED_HIGH_WATER_BYTES) {
+        pauseDecodeFeed();
     }
     scheduleDrain();
 };
