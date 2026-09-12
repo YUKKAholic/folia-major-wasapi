@@ -2,6 +2,7 @@ import React, { useCallback, useLayoutEffect, useRef } from 'react';
 import { MotionValue, useMotionValueEvent } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { useWasapiStatusStore } from '../stores/useWasapiStatusStore';
+import { useAudioSettingsStore } from '../stores/useAudioSettingsStore';
 
 interface ProgressBarProps {
     currentTime: MotionValue<number>;
@@ -14,6 +15,12 @@ interface ProgressBarProps {
     trackColor?: string;
     disabled?: boolean;
     edgeStyle?: 'rounded' | 'square';
+    /**
+     * Whether to mount the WASAPI mode chip. Off in the collapsed capsule: the chip is invisible
+     * there (the capsule expands on hover before it can show) and its reserved width pushed the bar
+     * off-centre. The expanded capsule keeps it.
+     */
+    showWasapiBadge?: boolean;
 }
 
 
@@ -35,6 +42,7 @@ const ProgressBar: React.FC<ProgressBarProps> = ({
     trackColor = 'rgba(255,255,255,0.1)',
     disabled = false,
     edgeStyle = 'rounded',
+    showWasapiBadge = true,
 }) => {
     const progressRef = useRef<HTMLDivElement>(null);
     const timeRef = useRef<HTMLSpanElement>(null);
@@ -45,6 +53,9 @@ const ProgressBar: React.FC<ProgressBarProps> = ({
     const { t } = useTranslation();
     // WASAPI output mode, surfaced beside the bar. 'off' means the feature is disabled.
     const wasapiMode = useWasapiStatusStore(state => state.mode);
+    const wasapiExclusiveEnabled = useAudioSettingsStore(state => state.enableWasapiExclusive);
+    const toggleWasapiExclusive = useAudioSettingsStore(state => state.handleToggleWasapiExclusive);
+    const hasWasapi = typeof window !== 'undefined' && Boolean(window.electron?.wasapi);
 
     // Keeps continuous progress on the compositor while coarse values update only when needed.
     const updateUI = useCallback((value: number, force = false, syncInput = true, bypassDrag = false) => {
@@ -170,16 +181,27 @@ const ProgressBar: React.FC<ProgressBarProps> = ({
                 {formatTime(duration)}
             </span>
 
-            {wasapiMode !== 'off' && (
-                <span
-                    className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full border whitespace-nowrap shrink-0"
+            {hasWasapi && showWasapiBadge && (
+                // Hidden until the bottom capsule is hovered, so it never clutters the bar. Clicking
+                // it flips exclusive output on/off (off = Chromium's normal shared output) without
+                // opening the settings. Pointer events are stopped so the click never reaches the
+                // capsule's own click/drag handlers.
+                <button
+                    type="button"
+                    title={wasapiMode === 'exclusive' ? t('options.wasapiModeExclusive') : t('options.wasapiModeShared')}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        toggleWasapiExclusive(!wasapiExclusiveEnabled);
+                    }}
+                    className="opacity-0 pointer-events-none group-hover/capsule:opacity-100 group-hover/capsule:pointer-events-auto transition-opacity duration-200 text-[9px] font-semibold px-1.5 py-0.5 rounded-full border whitespace-nowrap shrink-0 cursor-pointer"
                     style={{
                         color: wasapiMode === 'exclusive' ? primaryColor : secondaryColor,
                         borderColor: trackColor,
                     }}
                 >
                     {wasapiMode === 'exclusive' ? t('options.wasapiModeExclusive') : t('options.wasapiModeShared')}
-                </span>
+                </button>
             )}
         </div>
     );
